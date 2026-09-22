@@ -1,0 +1,15 @@
+# PlatformIO
+firmware/.pio/
+firmware/.vscode/
+
+# Next.js
+client/node_modules/
+client/.next/
+client/out/
+client/.vercel
+client/*.tsbuildinfo
+
+# OS / editor
+.DS_Store
+*.log
+/agent-tools/
