@@ -18,6 +18,60 @@ void copyReq(const JsonDocument& in, JsonDocument& out) {
 
 }  // namespace
 
+void SerialLink::noteUsbReady() {
+  lastUsbReadyMs_ = millis();
+  usbSeen_ = true;
+}
+
+bool SerialLink::usbReadyNow() const {
+  if (!usbSeen_) return false;
+  return millis() - lastUsbReadyMs_ < USB_READY_MS;
+}
+
+bool SerialLink::usbTypingReady() const { return usbReadyNow(); }
+
+bool SerialLink::consumeUsbChange(bool& ready) {
+  const bool now = usbReadyNow();
+  if (now == usbReported_) return false;
+  usbReported_ = now;
+  ready = now;
+  return true;
+}
+
+bool SerialLink::requestUsbType(const VaultEntry& entry, Vault& vault, const KeyboardOut& keyboard,
+                                const char*& error) {
+  typeAckPending_ = true;
+  typeAckGot_ = false;
+  typeAckOk_ = false;
+  typeError_[0] = '\0';
+
+  JsonDocument doc;
+  doc["event"] = "type_usb";
+  doc["id"] = entry.id;
+  doc["name"] = entry.name;
+  doc["password"] = entry.password;
+  writeJson(doc);
+  Serial.flush();
+
+  const unsigned long start = millis();
+  while (millis() - start < USB_TYPE_ACK_MS) {
+    poll(vault, keyboard);
+    if (typeAckGot_) break;
+    delay(LOOP_POLL_MS);
+  }
+  typeAckPending_ = false;
+
+  if (!typeAckGot_) {
+    error = "The USB typer did not answer.";
+    return false;
+  }
+  if (!typeAckOk_) {
+    error = typeError_[0] == '\0' ? "The USB typer could not type." : typeError_;
+    return false;
+  }
+  return true;
+}
+
 void SerialLink::poll(Vault& vault, const KeyboardOut& keyboard) {
   while (Serial.available() > 0) {
     const int raw = Serial.read();
@@ -73,6 +127,7 @@ void SerialLink::sendSnapshot(const char* op, bool ok, const char* error, const 
   if (vault.selectedId() == 0) doc["selectedId"] = nullptr;
   else doc["selectedId"] = vault.selectedId();
   doc["keyboardConnected"] = keyboard.connected();
+  doc["usbTyping"] = usbReadyNow();
   writeJson(doc);
 }
 
@@ -95,6 +150,28 @@ void SerialLink::handleLine(const char* line, Vault& vault, const KeyboardOut& k
     err["error"] = "Command needs an op field.";
     copyReq(in, err);
     writeJson(err);
+    return;
+  }
+
+  if (strcmp(op, "usb_ready") == 0) {
+    noteUsbReady();
+    return;
+  }
+
+  if (strcmp(op, "type_ack") == 0) {
+    if (!typeAckPending_) return;
+    typeAckGot_ = true;
+    typeAckOk_ = !in["ok"].is<bool>() || in["ok"].as<bool>();
+    typeError_[0] = '\0';
+    if (in["error"].is<const char*>()) {
+      const char* message = in["error"].as<const char*>();
+      size_t i = 0;
+      while (message[i] != '\0' && i + 1 < sizeof(typeError_)) {
+        typeError_[i] = message[i];
+        i++;
+      }
+      typeError_[i] = '\0';
+    }
     return;
   }
 
@@ -155,6 +232,7 @@ void SerialLink::emitReady(const Vault& vault, bool keyboardConnected) {
   doc["event"] = "ready";
   doc["version"] = PROTOCOL_VERSION;
   doc["keyboardConnected"] = keyboardConnected;
+  doc["usbTyping"] = usbReadyNow();
   if (!vault.mutableOk()) doc["error"] = vault.loadError();
   else if (vault.selectedId() == 0) doc["selectedId"] = nullptr;
   else doc["selectedId"] = vault.selectedId();
@@ -194,5 +272,12 @@ void SerialLink::emitKeyboard(bool connected) {
   JsonDocument doc;
   doc["event"] = "keyboard";
   doc["connected"] = connected;
+  writeJson(doc);
+}
+
+void SerialLink::emitUsb(bool ready) {
+  JsonDocument doc;
+  doc["event"] = "usb";
+  doc["ready"] = ready;
   writeJson(doc);
 }

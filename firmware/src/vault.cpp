@@ -236,18 +236,15 @@ uint32_t Vault::selectedId() const {
   return entry == nullptr ? 0 : entry->id;
 }
 
-bool Vault::selectPrevious() {
-  if (entries_.empty()) return false;
-  if (selected_ < 0) selected_ = 0;
-  else if (selected_ == 0) selected_ = size() - 1;
-  else selected_--;
-  return true;
+int Vault::selectableCount() const {
+  const int count = size();
+  if (count < VAULT_BUTTON_SLOTS) return count;
+  return VAULT_BUTTON_SLOTS;
 }
 
-bool Vault::selectNext() {
-  if (entries_.empty()) return false;
-  if (selected_ < 0) selected_ = 0;
-  else selected_ = (selected_ + 1) % size();
+bool Vault::selectSlot(int slot) {
+  if (slot < 0 || slot >= selectableCount()) return false;
+  selected_ = slot;
   return true;
 }
 

@@ -10,34 +10,38 @@ bool ButtonInput::readPressed(int pin) {
 }
 
 void ButtonInput::begin() {
-  buttons_[0] = {PIN_BUTTON_PREVIOUS, InputEvent::Previous, false, false, 0};
-  buttons_[1] = {PIN_BUTTON_TYPE, InputEvent::Type, false, false, 0};
-  buttons_[2] = {PIN_BUTTON_NEXT, InputEvent::Next, false, false, 0};
-
+  pinMode(PIN_BUTTON, BUTTON_ACTIVE_LOW ? INPUT_PULLUP : INPUT_PULLDOWN);
   const unsigned long now = millis();
-  for (int i = 0; i < 3; i++) {
-    pinMode(buttons_[i].pin, BUTTON_ACTIVE_LOW ? INPUT_PULLUP : INPUT_PULLDOWN);
-    const bool pressed = readPressed(buttons_[i].pin);
-    buttons_[i].stablePressed = pressed;
-    buttons_[i].lastReading = pressed;
-    buttons_[i].lastChangeMs = now;
-  }
+  const bool pressed = readPressed(PIN_BUTTON);
+  stablePressed_ = pressed;
+  lastReading_ = pressed;
+  lastChangeMs_ = now;
+  pressedAtMs_ = now;
+  longFired_ = pressed;
 }
 
 InputEvent ButtonInput::poll() {
   const unsigned long now = millis();
-  for (int i = 0; i < 3; i++) {
-    Button& button = buttons_[i];
-    const bool pressed = readPressed(button.pin);
-    if (pressed != button.lastReading) {
-      button.lastReading = pressed;
-      button.lastChangeMs = now;
-    }
-    if (pressed == button.stablePressed) continue;
-    if (now - button.lastChangeMs < BUTTON_DEBOUNCE_MS) continue;
+  const bool pressed = readPressed(PIN_BUTTON);
+  if (pressed != lastReading_) {
+    lastReading_ = pressed;
+    lastChangeMs_ = now;
+  }
 
-    button.stablePressed = pressed;
-    if (pressed) return button.event;
+  if (pressed != stablePressed_ && now - lastChangeMs_ >= BUTTON_DEBOUNCE_MS) {
+    stablePressed_ = pressed;
+    if (pressed) {
+      pressedAtMs_ = now;
+      longFired_ = false;
+      return InputEvent::Pressed;
+    }
+    if (!longFired_) return InputEvent::ShortPress;
+    return InputEvent::None;
+  }
+
+  if (stablePressed_ && !longFired_ && now - pressedAtMs_ >= BUTTON_LONG_PRESS_MS) {
+    longFired_ = true;
+    return InputEvent::LongPress;
   }
   return InputEvent::None;
 }

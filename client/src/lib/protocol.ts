@@ -16,6 +16,7 @@ export type VaultSnapshot = {
   entries: VaultEntry[];
   selectedId: number | null;
   keyboardConnected: boolean;
+  usbTyping: boolean;
 };
 
 export type DeviceCommand =
@@ -33,6 +34,7 @@ export type DeviceResponse = {
   entries?: unknown;
   selectedId?: unknown;
   keyboardConnected?: unknown;
+  usbTyping?: unknown;
 };
 
 export type DeviceEvent =
@@ -40,12 +42,14 @@ export type DeviceEvent =
       event: "ready";
       version?: number;
       keyboardConnected?: boolean;
+      usbTyping?: boolean;
       selectedId?: number | null;
       error?: string;
     }
   | { event: "selected"; id: number | null; name: string | null; index: number }
   | { event: "typed"; id: number; name: string }
   | { event: "keyboard"; connected: boolean }
+  | { event: "usb"; ready: boolean }
   | { event: "type_failed"; error: string };
 
 export function validateName(name: string): string | null {
@@ -99,6 +103,7 @@ export function snapshotFrom(response: DeviceResponse): VaultSnapshot {
     entries,
     selectedId,
     keyboardConnected: response.keyboardConnected === true,
+    usbTyping: response.usbTyping === true,
   };
 }
 
@@ -125,6 +130,8 @@ export function parseDeviceMessage(
         typeof record.keyboardConnected === "boolean"
           ? record.keyboardConnected
           : undefined,
+      usbTyping:
+        typeof record.usbTyping === "boolean" ? record.usbTyping : undefined,
       selectedId:
         typeof record.selectedId === "number" ? record.selectedId : null,
       error: typeof record.error === "string" ? record.error : undefined,
@@ -147,6 +154,9 @@ export function parseDeviceMessage(
   }
   if (record.event === "keyboard" && typeof record.connected === "boolean") {
     return { event: "keyboard", connected: record.connected };
+  }
+  if (record.event === "usb" && typeof record.ready === "boolean") {
+    return { event: "usb", ready: record.ready };
   }
   if (record.event === "type_failed") {
     return {

@@ -2,14 +2,14 @@
 
 #include <stdint.h>
 
-// What the rest of the firmware can ask the hardware to do.
-// A later wheel-with-button should emit these same events.
-// Selection and typing must not read pins themselves.
+// Gestures from the single button. Selection and typing must not read pins.
+// Pressed is the debounced press. ShortPress is a release before the
+// long-press time. LongPress fires once when the hold reaches that time.
 enum class InputEvent : uint8_t {
   None = 0,
-  Previous,
-  Type,
-  Next,
+  Pressed,
+  ShortPress,
+  LongPress,
 };
 
 class Input {

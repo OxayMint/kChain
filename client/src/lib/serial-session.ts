@@ -6,6 +6,11 @@ import {
   type DeviceResponse,
 } from "@/lib/protocol";
 
+export type VaultSession = {
+  request(command: DeviceCommand, timeoutMs?: number): Promise<DeviceResponse>;
+  close(): Promise<void>;
+};
+
 export class DeviceError extends Error {
   constructor(message: string) {
     super(message);

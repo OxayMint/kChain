@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { AgentVault, usbTyperStatus, type UsbTyperStatus } from "@/lib/agent-session";
 import {
   LIMITS,
   snapshotFrom,
@@ -29,11 +30,12 @@ import {
   isPortCancel,
   SerialVault,
   serialSupported,
+  type VaultSession,
 } from "@/lib/serial-session";
 
 type Status =
   | { phase: "disconnected" }
-  | { phase: "connecting" }
+  | { phase: "connecting"; via: "agent" | "serial" }
   | { phase: "loading" }
   | { phase: "ready"; snapshot: VaultSnapshot; notice: string | null }
   | { phase: "error"; message: string };
@@ -58,7 +60,8 @@ export function VaultEditor() {
   const [editPassword, setEditPassword] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<VaultEntry | null>(null);
-  const sessionRef = useRef<SerialVault | null>(null);
+  const sessionRef = useRef<VaultSession | null>(null);
+  const [typer, setTyper] = useState<UsbTyperStatus>("down");
   const browserSerial = useSyncExternalStore(
     () => () => {},
     serialSupported,
@@ -71,6 +74,21 @@ export function VaultEditor() {
     };
   }, []);
 
+  useEffect(() => {
+    if (status.phase !== "disconnected") return;
+    let stop = false;
+    async function probe() {
+      const next = await usbTyperStatus();
+      if (!stop) setTyper(next);
+    }
+    void probe();
+    const timer = setInterval(() => void probe(), 2000);
+    return () => {
+      stop = true;
+      clearInterval(timer);
+    };
+  }, [status.phase]);
+
   function applyEvent(event: DeviceEvent) {
     setStatus((current) => {
       if (current.phase !== "ready") return current;
@@ -78,6 +96,12 @@ export function VaultEditor() {
         return {
           ...current,
           snapshot: { ...current.snapshot, keyboardConnected: event.connected },
+        };
+      }
+      if (event.event === "usb") {
+        return {
+          ...current,
+          snapshot: { ...current.snapshot, usbTyping: event.ready },
         };
       }
       if (event.event === "selected") {
@@ -97,7 +121,7 @@ export function VaultEditor() {
     });
   }
 
-  async function readVault(session: SerialVault): Promise<VaultSnapshot> {
+  async function readVault(session: VaultSession): Promise<VaultSnapshot> {
     let last: unknown = null;
     await delay(200);
     for (let attempt = 0; attempt < 4; attempt++) {
@@ -115,19 +139,21 @@ export function VaultEditor() {
       : new Error("The device did not answer.");
   }
 
-  async function connect(anyPort: boolean) {
+  async function connect(mode: "agent" | "espressif" | "any") {
     setFormError(null);
-    setStatus({ phase: "connecting" });
-    const session = new SerialVault(
-      (event) => applyEvent(event),
-      (message) => {
-        sessionRef.current = null;
-        setBusy(null);
-        setStatus({ phase: "error", message });
-      },
-    );
+    setStatus({ phase: "connecting", via: mode === "agent" ? "agent" : "serial" });
+    const onDisconnect = (message: string) => {
+      sessionRef.current = null;
+      setBusy(null);
+      setStatus({ phase: "error", message });
+    };
+    const session: VaultSession =
+      mode === "agent"
+        ? new AgentVault((event) => applyEvent(event), onDisconnect)
+        : new SerialVault((event) => applyEvent(event), onDisconnect);
     try {
-      await session.connect(anyPort);
+      if (session instanceof AgentVault) await session.connect();
+      else await (session as SerialVault).connect(mode === "any");
       setStatus({ phase: "loading" });
       const snapshot = await readVault(session);
       sessionRef.current = session;
@@ -144,7 +170,7 @@ export function VaultEditor() {
 
   async function mutate(
     kind: Exclude<Busy, null>,
-    run: (session: SerialVault) => Promise<VaultSnapshot>,
+    run: (session: VaultSession) => Promise<VaultSnapshot>,
   ) {
     const session = sessionRef.current;
     if (!session) {
@@ -232,7 +258,8 @@ export function VaultEditor() {
   }
 
   const snapshot = status.phase === "ready" ? status.snapshot : null;
-  const showUnsupported = !browserSerial && status.phase === "disconnected";
+  const showUnsupported =
+    !browserSerial && typer === "down" && status.phase === "disconnected";
 
   return (
     <div className="flex min-h-full flex-1 flex-col">
@@ -247,9 +274,11 @@ export function VaultEditor() {
               kChain
             </h1>
             <p className="mt-3 text-base leading-7 text-muted-foreground">
-              Passwords stay on the board. Pair kChain over Bluetooth, choose an
-              entry with the buttons, and it types that password into the
-              focused field. This page writes the vault over the USB cable.
+              Passwords stay on the board. Choose one of the first five entries
+              with the button, and a long press types that password into the
+              focused field. Bluetooth types when a host is paired. The USB
+              typer types on this computer while it is running. This page writes
+              the vault over the USB cable.
             </p>
           </div>
           <KeyboardStatus snapshot={snapshot} />
@@ -275,29 +304,58 @@ export function VaultEditor() {
                 are stored in the clear. There is no PIN.
               </p>
               <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">
-                On the device, the three buttons are previous, type, and next.
-                Type sends the password characters only, then stops. It does
-                not press Enter.
+                The board starts idle. A press wakes it, and the onboard LED
+                blinks the selected entry’s number in groups of three, then
+                pauses a second. A short press steps through the first five
+                entries and wraps. Hold the button for one second to type,
+                which returns the board to idle. It also returns to idle after
+                5 seconds with the button released. Typing sends the password
+                characters only, then stops. It does not press Enter.
               </p>
+              <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">
+                On a computer without Bluetooth, start the USB typer from the
+                host folder. It holds the serial port and types the password
+                into the focused field. This page connects through it while it
+                is running.
+              </p>
+              {typer === "waiting" && (
+                <p className="mt-3 text-sm text-muted-foreground">
+                  The USB typer is running and waiting for the board.
+                </p>
+              )}
               <div className="mt-5 flex flex-col gap-2 sm:flex-row">
-                <Button type="button" onClick={() => void connect(false)}>
-                  Connect device
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => void connect(true)}
-                >
-                  Show every serial port
-                </Button>
+                {typer === "ready" && (
+                  <Button type="button" onClick={() => void connect("agent")}>
+                    Connect through USB typer
+                  </Button>
+                )}
+                {browserSerial && (
+                  <Button
+                    type="button"
+                    variant={typer === "ready" ? "outline" : "default"}
+                    onClick={() => void connect("espressif")}
+                  >
+                    Connect device
+                  </Button>
+                )}
+                {browserSerial && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void connect("any")}
+                  >
+                    Show every serial port
+                  </Button>
+                )}
               </div>
             </section>
           )}
 
           {status.phase === "connecting" && (
-            <StatusBlock title="Waiting for a serial port">
-              Choose the ESP32-C3 in the browser prompt. Cancel returns you
-              here.
+            <StatusBlock title="Waiting for the board">
+              {status.via === "agent"
+                ? "Opening the board through the USB typer."
+                : "Choose the ESP32-C3 if the browser asks for a serial port. Cancel returns you here."}
             </StatusBlock>
           )}
 
@@ -319,7 +377,12 @@ export function VaultEditor() {
                 <AlertDescription>{status.message}</AlertDescription>
               </Alert>
               <div className="flex flex-col gap-2 sm:flex-row">
-                <Button type="button" onClick={() => void connect(false)}>
+                <Button
+                  type="button"
+                  onClick={() =>
+                    void connect(typer === "down" && browserSerial ? "espressif" : "agent")
+                  }
+                >
                   Try again
                 </Button>
                 <Button
@@ -599,15 +662,17 @@ function KeyboardStatus({ snapshot }: { snapshot: VaultSnapshot | null }) {
     <p className="text-sm sm:max-w-56 sm:text-right">
       <span
         className={
-          snapshot.keyboardConnected
+          snapshot.usbTyping || snapshot.keyboardConnected
             ? "mr-2 inline-block size-2 rounded-full bg-primary"
             : "mr-2 inline-block size-2 rounded-full bg-muted-foreground"
         }
         aria-hidden
       />
-      {snapshot.keyboardConnected
-        ? "Bluetooth keyboard connected"
-        : "Waiting for a Bluetooth host to pair with kChain"}
+      {snapshot.usbTyping
+        ? "USB typer will enter passwords on this computer"
+        : snapshot.keyboardConnected
+          ? "Bluetooth keyboard connected"
+          : "Waiting for a Bluetooth host, or the USB typer"}
     </p>
   );
 }

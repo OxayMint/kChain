@@ -1,0 +1,11 @@
+{
+  "name": "kchain-usb",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node kchain-usb.mjs"
+  },
+  "dependencies": {
+    "serialport": "^13.0.0"
+  }
+}

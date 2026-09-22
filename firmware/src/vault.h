@@ -29,9 +29,10 @@ class Vault {
   int selectedIndex() const { return selected_; }
   uint32_t selectedId() const;
 
-  // False when the vault is empty. A single entry still reports true.
-  bool selectPrevious();
-  bool selectNext();
+  // How many entries the button can reach. Capped, and zero when empty.
+  int selectableCount() const;
+  // Slot is 0-based within selectableCount(). False when out of range.
+  bool selectSlot(int slot);
 
   bool add(const char* name, const char* password, uint32_t& newId, const char*& error);
   bool edit(uint32_t id, const char* name, const char* password, const char*& error);
