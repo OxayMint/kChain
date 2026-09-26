@@ -1,12 +1,14 @@
 # kChain
 
-kChain is a password vault that lives on an ESP32-C3 Super Mini. It pairs over Bluetooth as a keyboard named **kChain**. One button picks an entry and types that password into whatever field is focused on the computer or phone. The same long press types over the USB cable when the USB typer is running, which is how a computer without Bluetooth gets the password. A browser page edits the vault over USB while the board is plugged in.
+kChain is a password vault that lives on an ESP32-C3 Super Mini. It pairs over Bluetooth as a keyboard named **kChain**. A roller encoder picks an entry, and a double tap types that password into whatever field is focused on the computer or phone. The same double tap types over the USB cable when the USB typer is running, which is how a computer without Bluetooth gets the password. A browser page edits the vault over USB while the board is plugged in.
 
 Passwords are stored in the clear on device flash. There is no encryption and no unlock PIN.
 
 ## Pins
 
 The button is active-low. Wire the switch between GPIO 5 and GND. The firmware enables the internal pull-up. Change `PIN_BUTTON` in `firmware/include/config.h` and rebuild. The file rejects pins this board cannot use.
+
+The mouse-wheel encoder navigates (the H-13 mark is the 13 mm body). Wire its common pin to GND, A to GPIO 6, and B to GPIO 7. The common pin is the middle one. Each detent steps one entry. Wheel up moves to the next entry and wheel down moves to the previous one, and both wrap inside the first five entries. Swap A and B if those directions feel backwards.
 
 The blue onboard LED is GPIO 8, active-low. The firmware drives it after boot.
 
@@ -38,7 +40,7 @@ If upload never starts, hold BOOT (GPIO 9), tap RST, release BOOT, and run the u
 
 An empty vault is valid. On first boot the firmware creates one. The board starts idle: the LED stays off, and a press does nothing until there is an entry. Bluetooth and USB keep running in idle.
 
-A press wakes the board onto password 1. The LED then repeats: flash that password’s number, wait one second. Flashes are grouped by three. Two is two short blinks. Four is three blinks, 200 ms, then one more. A short press advances to the next password and wraps after the last of the first five. The button only reaches those entries. Holding the button for one second types the selected password, then the board returns to idle. With the USB typer running, that type goes to the computer on the cable. Otherwise it goes to the paired Bluetooth host. It also returns to idle after 5 seconds with the button released. Typing sends the password characters only, then releases every key. It does not press Enter. The press that wakes the board does not also advance or type.
+A tap wakes the board onto password 1. The LED then repeats: flash that password’s number, wait one second. Flashes are grouped by three. Two is two short blinks. Four is three blinks, 200 ms, then one more. Wheel up and wheel down step through the first five passwords and wrap. A turn also wakes the board onto the entry it lands on. The button and the wheel only reach those entries. A double tap types the selected password, then the board returns to idle. With the USB typer running, that type goes to the computer on the cable. Otherwise it goes to the paired Bluetooth host. It also returns to idle after 5 seconds with the button released and the wheel still. Typing sends the password characters only, then releases every key. It does not press Enter. The tap or double tap that wakes the board leaves the password untyped; a later double tap types it. A hold is reserved for the menu.
 
 ## Client
 
@@ -54,9 +56,9 @@ Then open [http://localhost:4317](http://localhost:4317). Connect the board, cho
 
 ## USB typing
 
-The ESP32-C3 USB port is a serial port. It cannot appear as a USB keyboard. The USB typer runs on the computer, holds that port, and types the selected password into the focused field when the button is held.
+The ESP32-C3 USB port is a serial port. It cannot appear as a USB keyboard. The USB typer runs on the computer and types the selected password into the focused field on a double tap.
 
-While the typer is running it is the path that types, including when a Bluetooth host is also paired. Quit the typer and Bluetooth types again. The browser page can connect through the typer. Web Serial and the typer cannot hold the port at the same time.
+The editor can keep the serial port and ask the typer to type. The typer can also hold the port, and the editor connects through it. Those two cannot hold the port at the same time. While either path is live, a double tap types on this computer, including when a Bluetooth host is also paired. Quit the typer and Bluetooth types again.
 
 ```bash
 cd host
@@ -77,8 +79,8 @@ USB serial is 115200 baud, one JSON object per line. The client sends `req` and 
 {"op":"delete","req":4,"id":1}
 ```
 
-A successful reply includes the full vault. `selectedId` is JSON `null` when the vault is empty. `keyboardConnected` is whether a Bluetooth host is paired. `usbTyping` is whether the USB typer has the cable open. A long press types through the USB typer when `usbTyping` is true, and through Bluetooth otherwise.
+A successful reply includes the full vault. `selectedId` is JSON `null` when the vault is empty. `keyboardConnected` is whether a Bluetooth host is paired. `usbTyping` is whether a USB heartbeat arrived in the last few seconds. A double tap types through USB when `usbTyping` is true, and through Bluetooth otherwise.
 
 The device also emits events the client does not have to answer: `ready`, `selected`, `typed`, `type_failed`, `keyboard`, and `usb`.
 
-The USB typer sends `{"op":"usb_ready"}` about once a second while the port is open. A long press then sends `type_usb` with the password, and the typer answers `{"op":"type_ack","ok":true}` or `{"op":"type_ack","ok":false,"error":"..."}`. The editor does not send these.
+The editor, or the USB typer when it holds the port, sends `{"op":"usb_ready"}` about once a second. A double tap then sends `type_usb` with the password. The computer answers `{"op":"type_ack","ok":true}` or `{"op":"type_ack","ok":false,"error":"..."}`.

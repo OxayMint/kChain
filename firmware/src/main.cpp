@@ -2,12 +2,14 @@
 
 #include "button_input.h"
 #include "config.h"
+#include "encoder_input.h"
 #include "keyboard_out.h"
 #include "serial_link.h"
 #include "status_led.h"
 #include "vault.h"
 
 ButtonInput buttonInput;
+EncoderInput encoderInput;
 Input& input = buttonInput;
 Vault vault;
 KeyboardOut keyboard;
@@ -17,9 +19,8 @@ StatusLed led;
 enum class Activity : uint8_t { Idle, Active };
 
 Activity activity = Activity::Idle;
-// The press that leaves idle only wakes the board. Its release, and a
-// hold that crosses the long-press time, do not also change the slot.
-bool wakeHold = false;
+// The gesture that leaves idle only wakes the board. A later double tap types.
+bool wakeGesture = false;
 unsigned long lastActivityMs = 0;
 
 void setup() {
@@ -35,12 +36,14 @@ void setup() {
   led.begin();
   vault.begin();
   keyboard.begin();
+  // After Bluetooth. Starting the radio clears GPIO interrupts attached earlier.
+  encoderInput.begin();
   serialLink.emitReady(vault, keyboard.connected());
 }
 
 void goIdle() {
   activity = Activity::Idle;
-  wakeHold = false;
+  wakeGesture = false;
   led.showIdle();
 }
 
@@ -78,35 +81,51 @@ void applySelection(int slot) {
   serialLink.emitSelected(vault);
 }
 
+// One detent per step. Wheel up moves toward higher slots and wraps.
+// Wheel down moves the other way and wraps. A turn also wakes the board.
+void stepSelection(int delta) {
+  const int count = vault.selectableCount();
+  if (count <= 0 || delta == 0) return;
+  int index = vault.selectedIndex();
+  if (index < 0) index = 0;
+  int slot = (index + delta) % count;
+  if (slot < 0) slot += count;
+  activity = Activity::Active;
+  lastActivityMs = millis();
+  applySelection(slot);
+}
+
 void loop() {
   serialLink.poll(vault, keyboard);
 
-  const InputEvent event = input.poll();
-  if (event == InputEvent::Pressed) {
+  // Tap, double tap, and hold. A press wakes immediately, before the
+  // gesture is classified, so the LED does not wait out the double-tap window.
+  const InputEvent event = buttonInput.poll();
+  if (buttonInput.consumePress()) {
     if (activity == Activity::Idle) {
       if (vault.selectSlot(0)) {
         activity = Activity::Active;
-        wakeHold = true;
+        wakeGesture = true;
         lastActivityMs = millis();
         serialLink.emitSelected(vault);
       }
     } else {
-      wakeHold = false;
       lastActivityMs = millis();
     }
-  } else if (wakeHold &&
-             (event == InputEvent::ShortPress || event == InputEvent::LongPress)) {
-    wakeHold = false;
+  }
+  if (event == InputEvent::DoubleTap && wakeGesture) {
+    wakeGesture = false;
     lastActivityMs = millis();
-  } else if (activity == Activity::Active && event == InputEvent::ShortPress) {
-    const int count = vault.selectableCount();
-    const int index = vault.selectedIndex();
-    if (count > 0 && index >= 0) applySelection((index + 1) % count);
-    lastActivityMs = millis();
-  } else if (activity == Activity::Active && event == InputEvent::LongPress) {
+  } else if (activity == Activity::Active && event == InputEvent::DoubleTap) {
     lastActivityMs = millis();
     if (typeSelected()) goIdle();
+  } else if (event == InputEvent::Tap || event == InputEvent::Hold) {
+    wakeGesture = false;
+    lastActivityMs = millis();
   }
+
+  // Wheel up is positive. Wheel down is negative.
+  stepSelection(encoderInput.takeSteps());
 
   // A held button is activity. The idle timeout starts at release.
   if (buttonInput.held()) lastActivityMs = millis();

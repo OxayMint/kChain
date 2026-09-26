@@ -20,9 +20,9 @@ export default function Error({
       <p className="font-mono text-xs tracking-[0.16em] text-muted-foreground uppercase">
         kChain
       </p>
-      <h1 className="mt-2 font-display text-4xl">This page hit an error</h1>
+      <h1 className="mt-2 font-display text-4xl">Something went wrong</h1>
       <p className="mt-3 text-sm leading-6 text-muted-foreground">
-        {error.message || "Something broke while rendering the vault editor."}
+        {error.message || "Try again."}
       </p>
       <div className="mt-6">
         <Button type="button" onClick={() => reset()}>

@@ -6,6 +6,8 @@ export const LIMITS = {
 
 export const ESPRESSIF_USB_VENDOR_ID = 0x303a;
 
+export const USB_TYPER_URL = "http://127.0.0.1:4318";
+
 export type VaultEntry = {
   id: number;
   name: string;

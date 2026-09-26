@@ -15,8 +15,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AgentVault, usbTyperStatus, type UsbTyperStatus } from "@/lib/agent-session";
+import { generatePassword } from "@/lib/generate-password";
 import {
-  LIMITS,
   snapshotFrom,
   validateName,
   validatePassword,
@@ -267,18 +267,12 @@ export function VaultEditor() {
       <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 py-8 sm:px-6 sm:py-12">
         <header className="flex flex-col gap-6 border-b border-border pb-8 sm:flex-row sm:items-end sm:justify-between">
           <div className="max-w-xl">
-            <p className="font-mono text-xs tracking-[0.16em] text-muted-foreground uppercase">
-              ESP32-C3 Super Mini
-            </p>
-            <h1 className="mt-2 font-display text-5xl tracking-tight text-foreground">
+            <h1 className="font-display text-5xl tracking-tight text-foreground">
               kChain
             </h1>
             <p className="mt-3 text-base leading-7 text-muted-foreground">
-              Passwords stay on the board. Choose one of the first five entries
-              with the button, and a long press types that password into the
-              focused field. Bluetooth types when a host is paired. The USB
-              typer types on this computer while it is running. This page writes
-              the vault over the USB cable.
+              A password device. Turn the wheel to choose a password, then
+              double-tap to type it. Use this page to add and change passwords.
             </p>
           </div>
           <KeyboardStatus snapshot={snapshot} />
@@ -287,46 +281,23 @@ export function VaultEditor() {
         <div className="mt-8 flex flex-1 flex-col gap-6" aria-live="polite">
           {showUnsupported && (
             <Alert variant="destructive">
-              <AlertTitle>This browser cannot open USB serial</AlertTitle>
+              <AlertTitle>Use Chrome or Edge</AlertTitle>
               <AlertDescription>
-                Open kChain in Chrome or Edge on the computer the ESP32-C3 is
-                plugged into. Web Serial is how this page talks to the board.
+                Open this page in Chrome or Edge, with the device plugged in.
               </AlertDescription>
             </Alert>
           )}
 
           {status.phase === "disconnected" && !showUnsupported && (
             <section className="rounded-xl border border-border bg-card p-5 sm:p-6">
-              <h2 className="font-display text-3xl">Connect the board</h2>
+              <h2 className="font-display text-3xl">Connect</h2>
               <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
-                Plug in the Super Mini, then choose its USB serial port. Chrome
-                and Edge list Espressif devices (vendor 303A) first. Entries
-                are stored in the clear. There is no PIN.
+                Plug in the device, then connect.
               </p>
-              <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">
-                The board starts idle. A press wakes it, and the onboard LED
-                blinks the selected entry’s number in groups of three, then
-                pauses a second. A short press steps through the first five
-                entries and wraps. Hold the button for one second to type,
-                which returns the board to idle. It also returns to idle after
-                5 seconds with the button released. Typing sends the password
-                characters only, then stops. It does not press Enter.
-              </p>
-              <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">
-                On a computer without Bluetooth, start the USB typer from the
-                host folder. It holds the serial port and types the password
-                into the focused field. This page connects through it while it
-                is running.
-              </p>
-              {typer === "waiting" && (
-                <p className="mt-3 text-sm text-muted-foreground">
-                  The USB typer is running and waiting for the board.
-                </p>
-              )}
               <div className="mt-5 flex flex-col gap-2 sm:flex-row">
                 {typer === "ready" && (
                   <Button type="button" onClick={() => void connect("agent")}>
-                    Connect through USB typer
+                    Connect
                   </Button>
                 )}
                 {browserSerial && (
@@ -335,7 +306,7 @@ export function VaultEditor() {
                     variant={typer === "ready" ? "outline" : "default"}
                     onClick={() => void connect("espressif")}
                   >
-                    Connect device
+                    {typer === "ready" ? "Choose a port" : "Connect"}
                   </Button>
                 )}
                 {browserSerial && (
@@ -344,7 +315,7 @@ export function VaultEditor() {
                     variant="outline"
                     onClick={() => void connect("any")}
                   >
-                    Show every serial port
+                    Other ports
                   </Button>
                 )}
               </div>
@@ -352,17 +323,17 @@ export function VaultEditor() {
           )}
 
           {status.phase === "connecting" && (
-            <StatusBlock title="Waiting for the board">
+            <StatusBlock title="Connecting">
               {status.via === "agent"
-                ? "Opening the board through the USB typer."
-                : "Choose the ESP32-C3 if the browser asks for a serial port. Cancel returns you here."}
+                ? "Connecting to the device."
+                : "Choose the device if the browser asks."}
             </StatusBlock>
           )}
 
           {status.phase === "loading" && (
             <div role="status" className="space-y-3">
               <p className="text-sm text-muted-foreground">
-                Reading entries from the device…
+                Loading passwords…
               </p>
               <div className="h-20 animate-pulse rounded-xl bg-muted" />
               <div className="h-20 animate-pulse rounded-xl bg-muted" />
@@ -400,25 +371,23 @@ export function VaultEditor() {
             <>
               {status.phase === "ready" && status.notice && (
                 <Alert>
-                  <AlertTitle>From the device</AlertTitle>
                   <AlertDescription>{status.notice}</AlertDescription>
                 </Alert>
               )}
 
               {snapshot.entries.length === 0 ? (
                 <section className="rounded-xl border border-dashed border-border px-5 py-10 text-center">
-                  <h2 className="font-display text-3xl">No passwords stored yet</h2>
+                  <h2 className="font-display text-3xl">No passwords yet</h2>
                   <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-                    Add the first one below. It is written to flash on the
-                    ESP32-C3. An empty vault is fine until you do.
+                    Add one below.
                   </p>
                 </section>
               ) : (
                 <section className="space-y-3">
                   <h2 className="text-sm text-muted-foreground">
                     {snapshot.entries.length === 1
-                      ? "1 entry on the device"
-                      : `${snapshot.entries.length} entries on the device`}
+                      ? "1 password"
+                      : `${snapshot.entries.length} passwords`}
                   </h2>
                   <ul className="space-y-3">
                     {snapshot.entries.map((entry) => {
@@ -495,12 +464,7 @@ export function VaultEditor() {
                 noValidate
                 className="rounded-xl border border-border bg-card p-4 sm:p-5"
               >
-                <h2 className="font-display text-3xl">Add an entry</h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Up to {LIMITS.entryMax} entries. Names can be {LIMITS.nameMaxBytes}{" "}
-                  bytes. Passwords are printable ASCII, up to {LIMITS.passwordMax}{" "}
-                  characters, because that is what the keyboard can type.
-                </p>
+                <h2 className="font-display text-3xl">Add a password</h2>
                 <div className="mt-4 grid gap-4 sm:grid-cols-2">
                   <div className="grid gap-2">
                     <Label htmlFor="add-name">Name</Label>
@@ -534,6 +498,21 @@ export function VaultEditor() {
                       disabled={busy !== null}
                       onChange={(event) => setPassword(event.target.value)}
                     />
+                    <div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={busy !== null}
+                        onClick={() => {
+                          setPassword(generatePassword());
+                          setShowAddPassword(true);
+                          setFormError(null);
+                        }}
+                      >
+                        Generate password
+                      </Button>
+                    </div>
                   </div>
                 </div>
                 {formError && (
@@ -543,7 +522,7 @@ export function VaultEditor() {
                 )}
                 <div className="mt-4 flex justify-end">
                   <Button type="submit" disabled={busy !== null}>
-                    {busy === "add" ? "Writing…" : "Add to device"}
+                    {busy === "add" ? "Adding…" : "Add"}
                   </Button>
                 </div>
               </form>
@@ -565,7 +544,7 @@ export function VaultEditor() {
           <DialogHeader>
             <DialogTitle>Edit entry</DialogTitle>
             <DialogDescription>
-              This replaces the name and password stored on the device.
+              Change the name or password.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={(event) => void onEdit(event)} noValidate>
@@ -590,6 +569,20 @@ export function VaultEditor() {
                   disabled={busy === "edit"}
                   onChange={(event) => setEditPassword(event.target.value)}
                 />
+                <div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={busy === "edit"}
+                    onClick={() => {
+                      setEditPassword(generatePassword());
+                      setEditError(null);
+                    }}
+                  >
+                    Generate password
+                  </Button>
+                </div>
               </div>
               {editError && (
                 <p className="text-sm text-destructive" role="alert">
@@ -623,10 +616,7 @@ export function VaultEditor() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Delete {deleting?.name ?? "this entry"}?</DialogTitle>
-            <DialogDescription>
-              The password is removed from the device flash. This cannot be
-              undone.
-            </DialogDescription>
+            <DialogDescription>This cannot be undone.</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button
@@ -643,7 +633,7 @@ export function VaultEditor() {
               disabled={busy === "delete"}
               onClick={() => void onDelete()}
             >
-              {busy === "delete" ? "Deleting…" : "Delete from device"}
+              {busy === "delete" ? "Deleting…" : "Delete"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -669,10 +659,10 @@ function KeyboardStatus({ snapshot }: { snapshot: VaultSnapshot | null }) {
         aria-hidden
       />
       {snapshot.usbTyping
-        ? "USB typer will enter passwords on this computer"
+        ? "Types on this computer"
         : snapshot.keyboardConnected
-          ? "Bluetooth keyboard connected"
-          : "Waiting for a Bluetooth host, or the USB typer"}
+          ? "Types over Bluetooth"
+          : "Not paired"}
     </p>
   );
 }

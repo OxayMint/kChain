@@ -1,6 +1,7 @@
 import {
   ESPRESSIF_USB_VENDOR_ID,
   parseDeviceMessage,
+  USB_TYPER_URL,
   type DeviceCommand,
   type DeviceEvent,
   type DeviceResponse,
@@ -44,6 +45,8 @@ export class SerialVault {
   private nextReq = 0;
   private waiter: Waiter | null = null;
   private closed = false;
+  private writeChain: Promise<void> = Promise.resolve();
+  private usbTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     private readonly onEvent: (event: DeviceEvent) => void,
@@ -75,6 +78,7 @@ export class SerialVault {
     this.reader = port.readable.getReader();
     this.writer = port.writable.getWriter();
     void this.readLoop();
+    void this.watchTyper();
   }
 
   async request(command: DeviceCommand, timeoutMs = 3000): Promise<DeviceResponse> {
@@ -85,8 +89,6 @@ export class SerialVault {
       throw new Error("Another command is still running.");
     }
     const req = ++this.nextReq;
-    const payload = JSON.stringify({ ...command, req }) + "\n";
-    await this.writer.write(new TextEncoder().encode(payload));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         if (this.waiter?.req !== req) return;
@@ -98,6 +100,12 @@ export class SerialVault {
         );
       }, timeoutMs);
       this.waiter = { req, resolve, reject, timer };
+      void this.writeRaw(JSON.stringify({ ...command, req })).catch((error: unknown) => {
+        if (this.waiter?.req !== req) return;
+        clearTimeout(timer);
+        this.waiter = null;
+        reject(error instanceof Error ? error : new Error("Could not write to the board."));
+      });
     });
   }
 
@@ -108,6 +116,10 @@ export class SerialVault {
   private async shutdown(message: string | null): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    if (this.usbTimer) {
+      clearInterval(this.usbTimer);
+      this.usbTimer = null;
+    }
     if (this.waiter) {
       clearTimeout(this.waiter.timer);
       const waiter = this.waiter;
@@ -163,7 +175,71 @@ export class SerialVault {
     }
   }
 
+  private writeRaw(line: string): Promise<void> {
+    const text = line.endsWith("\n") ? line : `${line}\n`;
+    const bytes = new TextEncoder().encode(text);
+    const run = this.writeChain.then(async () => {
+      if (!this.writer || this.closed) {
+        throw new Error("The serial port is not open.");
+      }
+      await this.writer.write(bytes);
+    });
+    this.writeChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async watchTyper(): Promise<void> {
+    while (!this.closed) {
+      if (await typerIsUp()) {
+        try {
+          await this.writeRaw('{"op":"usb_ready"}');
+        } catch {
+          return;
+        }
+        if (this.closed || this.usbTimer) return;
+        this.usbTimer = setInterval(() => {
+          void this.writeRaw('{"op":"usb_ready"}').catch(() => {});
+        }, 1000);
+        return;
+      }
+      await delay(1000);
+    }
+  }
+
+  private async answerTypeUsb(password: string): Promise<void> {
+    try {
+      const response = await fetch(`${USB_TYPER_URL}/type`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      if (!response.ok) {
+        const text = (await response.text()).replace(/\s+/g, " ").trim();
+        const error = text.slice(0, 90) || "The USB typer could not type.";
+        await this.writeRaw(JSON.stringify({ op: "type_ack", ok: false, error }));
+        return;
+      }
+      await this.writeRaw(JSON.stringify({ op: "type_ack", ok: true }));
+    } catch {
+      await this.writeRaw(
+        JSON.stringify({
+          op: "type_ack",
+          ok: false,
+          error: "The USB typer is not running.",
+        }),
+      );
+    }
+  }
+
   private dispatch(line: string): void {
+    const password = typeUsbPassword(line);
+    if (password != null) {
+      void this.answerTypeUsb(password);
+      return;
+    }
     const message = parseDeviceMessage(line);
     if (!message) return;
     if ("ok" in message) {
@@ -180,6 +256,28 @@ export class SerialVault {
       return;
     }
     this.onEvent(message);
+  }
+}
+
+function typeUsbPassword(line: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const record = parsed as Record<string, unknown>;
+  if (record.event !== "type_usb" || typeof record.password !== "string") return null;
+  return record.password;
+}
+
+async function typerIsUp(): Promise<boolean> {
+  try {
+    const response = await fetch(`${USB_TYPER_URL}/health`, { cache: "no-store" });
+    return response.ok;
+  } catch {
+    return false;
   }
 }
 

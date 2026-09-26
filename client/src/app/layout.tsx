@@ -21,7 +21,7 @@ const display = Instrument_Serif({
 export const metadata: Metadata = {
   title: "kChain",
   description:
-    "Edit the passwords stored on an ESP32-C3. The device types the selected one over Bluetooth.",
+    "A password device. Turn the wheel to choose a password, then double-tap to type it.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

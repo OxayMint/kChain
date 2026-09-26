@@ -1,12 +1,13 @@
 import {
   parseDeviceMessage,
+  USB_TYPER_URL,
   type DeviceCommand,
   type DeviceEvent,
   type DeviceResponse,
 } from "@/lib/protocol";
 import { DeviceError, type VaultSession } from "@/lib/serial-session";
 
-export const USB_TYPER_URL = "http://127.0.0.1:4318";
+export { USB_TYPER_URL };
 
 export type UsbTyperStatus = "down" | "waiting" | "ready";
 
@@ -30,7 +31,7 @@ export async function usbTyperStatus(): Promise<UsbTyperStatus> {
 }
 
 // Talks to the USB typer on this computer. The typer owns the serial port
-// and types passwords when the button is held.
+// and types passwords on a double tap.
 export class AgentVault implements VaultSession {
   private events: EventSource | null = null;
   private waiter: Waiter | null = null;

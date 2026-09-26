@@ -177,6 +177,10 @@ async function onDeviceLine(line) {
   forward(trimmed);
 }
 
+function portIsBusy(text) {
+  return /busy|EBUSY|already open/i.test(text);
+}
+
 function hostPath(path) {
   // The macOS tty node can sit open and deliver no bytes. The callout node is the one that talks.
   if (process.platform === "darwin") return path.replace("/dev/tty.", "/dev/cu.");
@@ -214,8 +218,8 @@ function holdPort(port) {
 }
 
 async function session(path) {
-  log(`Opening ${path}.`);
   const port = await openPort(path);
+  log(`Opened ${path}.`);
   activePort = port;
   deviceOpen = true;
   writeChain = Promise.resolve();
@@ -274,7 +278,37 @@ function startServer() {
     const url = new URL(req.url || "/", "http://127.0.0.1");
     if (req.method === "GET" && url.pathname === "/health") {
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-      res.end(JSON.stringify({ ok: true, device: deviceOpen }));
+      res.end(JSON.stringify({ ok: true, device: deviceOpen, typing: true }));
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/type") {
+      void (async () => {
+        try {
+          const body = (await readBody(req)).trim();
+          const parsed = JSON.parse(body);
+          if (!parsed || typeof parsed.password !== "string" || parsed.password.length === 0) {
+            res.writeHead(400);
+            res.end("Missing password.");
+            return;
+          }
+          if (parsed.password.length > 128) {
+            res.writeHead(400);
+            res.end("Password is too long.");
+            return;
+          }
+          log("Typing a password from the editor.");
+          await typePassword(parsed.password);
+          res.writeHead(204);
+          res.end();
+        } catch (error) {
+          if (!res.headersSent) {
+            const text = error instanceof Error ? shorten(error.message) : "Could not type.";
+            log(text);
+            res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+            res.end(text);
+          }
+        }
+      })();
       return;
     }
     if (req.method === "GET" && url.pathname === "/events") {
@@ -346,6 +380,7 @@ async function main() {
   }
   const server = startServer();
   let announcedWait = false;
+  let announcedBusy = false;
   while (!stopping) {
     try {
       const path = await findPort();
@@ -363,7 +398,16 @@ async function main() {
       deviceOpen = false;
       activePort = null;
       const text = error instanceof Error ? error.message : "Serial port failed.";
-      log(text);
+      if (portIsBusy(text)) {
+        if (!announcedBusy) {
+          log("The editor has the serial port. A double tap will type through this program.");
+          announcedBusy = true;
+          announcedWait = false;
+        }
+      } else {
+        announcedBusy = false;
+        log(text);
+      }
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
   }

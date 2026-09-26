@@ -8,7 +8,7 @@
 // Events are unsolicited and have no "ok".
 //
 // The ESP32-C3 USB port is serial, not a keyboard. When the USB typer has the
-// port open it sends usb_ready, and a long press asks it to type.
+// port open it sends usb_ready, and a double tap asks it to type.
 class SerialLink {
  public:
   void poll(Vault& vault, const KeyboardOut& keyboard);
