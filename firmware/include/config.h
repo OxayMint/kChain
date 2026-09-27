@@ -10,7 +10,7 @@
 // The internal pull-up holds the idle pin high; a press reads low.
 //
 // The button is GPIO 5. A tap wakes the board. A double tap types the
-// selected password. A hold is reserved for the menu.
+// selected entry. A hold is reserved for the menu.
 //
 // The mouse-wheel encoder navigates (body marked H-13, 13 mm tall).
 // A is GPIO 6, B is GPIO 7, and the common pin is ground. Wheel up steps
@@ -18,9 +18,8 @@
 // These wheels are 24 detents and 12 pulses
 // per turn, so one click is two quadrature transitions.
 //
-// The onboard LED is the blue diode on GPIO 8. It is active-low:
-// driving the pin low lights it. GPIO 8 is also a strapping pin;
-// it is only driven after boot, as an output.
+// GPIO 8 is the onboard LED and a strapping pin. The firmware does not
+// drive it. Selection is shown in the editor until a screen module exists.
 //
 // Leave these alone:
 //   GPIO 2, 9       strapping / boot. GPIO 9 is the BOOT button.
@@ -31,13 +30,11 @@
 static constexpr int PIN_BUTTON = 5;
 static constexpr int PIN_ENCODER_A = 6;
 static constexpr int PIN_ENCODER_B = 7;
-static constexpr int PIN_LED = 8;
 // Two same-direction transitions are one detent. One edge is only half
 // a click, which is what made the selection hop to the neighbor and back.
 static constexpr int ENCODER_COUNTS_PER_DETENT = 2;
 
 static constexpr bool BUTTON_ACTIVE_LOW = true;
-static constexpr bool LED_ACTIVE_LOW = true;
 static constexpr unsigned long BUTTON_DEBOUNCE_MS = 25;
 static constexpr unsigned long BUTTON_HOLD_MS = 1000;
 // The second tap has to start within this long after the first release.
@@ -47,24 +44,12 @@ static constexpr unsigned long BUTTON_DOUBLE_TAP_MS = 400;
 // pressed again. A hold keeps the board active.
 static constexpr unsigned long ACTIVE_IDLE_MS = 5000;
 
-// loop() polls the button, the encoder steps, the LED, and USB. A tight loop holds this
+// loop() polls the button, the encoder steps, and USB. A tight loop holds this
 // core out of idle, and that is most of the heat while the board is on the
-// 5V from USB-C. This is shorter than the button debounce and the LED flashes.
+// 5V from USB-C. This is shorter than the button debounce.
 static constexpr unsigned long LOOP_POLL_MS = 10;
-// 160 MHz is the Arduino default. Button, LED, and USB do not need it.
+// 160 MHz is the Arduino default. Button and USB do not need it.
 static constexpr uint32_t CPU_MHZ = 80;
-
-// One count is a burst of short flashes, split into groups of three.
-// Inside a group the diode blinks LED_FLASH_ON_MS, then stays dark for
-// LED_FLASH_GAP_MS. Groups are separated by LED_GROUP_GAP_MS.
-// After the whole count, the diode stays dark for LED_CYCLE_PAUSE_MS
-// and the burst repeats. Count 2 is two short flashes. Count 4 is
-// three flashes, 200 ms, then one more.
-static constexpr unsigned long LED_FLASH_ON_MS = 70;
-static constexpr unsigned long LED_FLASH_GAP_MS = 80;
-static constexpr unsigned long LED_GROUP_GAP_MS = 200;
-static constexpr unsigned long LED_CYCLE_PAUSE_MS = 1000;
-static constexpr int LED_GROUP_SIZE = 3;
 
 // Typing waits this long for the USB typer to finish the password.
 // 128 characters at the host's per-key delay fits inside it.
@@ -76,7 +61,10 @@ static constexpr unsigned long USB_READY_MS = 3000;
 static constexpr int VAULT_MAX_ENTRIES = 32;
 static constexpr int VAULT_BUTTON_SLOTS = 5;
 static constexpr size_t VAULT_NAME_MAX = 48;
+static constexpr size_t VAULT_HOSTNAME_MAX = 253;
+static constexpr size_t VAULT_USERNAME_MAX = 128;
 static constexpr size_t VAULT_PASSWORD_MAX = 128;
+static constexpr size_t VAULT_PHRASE_MAX = 256;
 
 static constexpr uint32_t SERIAL_BAUD = 115200;
 static constexpr int PROTOCOL_VERSION = 1;
@@ -96,7 +84,7 @@ static_assert(PIN_ENCODER_A != PIN_ENCODER_B && PIN_ENCODER_A != PIN_BUTTON &&
 static_assert(ENCODER_COUNTS_PER_DETENT >= 1, "a detent needs at least one edge");
 static_assert(BUTTON_DOUBLE_TAP_MS > BUTTON_DEBOUNCE_MS, "double tap must outlast debounce");
 static_assert(BUTTON_HOLD_MS > BUTTON_DOUBLE_TAP_MS, "hold must outlast a double tap");
-static_assert(PIN_LED == 8, "onboard LED on the Super Mini is GPIO 8");
 static_assert(VAULT_BUTTON_SLOTS >= 1, "the button needs at least one slot");
 static_assert(VAULT_BUTTON_SLOTS <= VAULT_MAX_ENTRIES, "button slots exceed the vault");
-static_assert(LED_GROUP_SIZE >= 1, "flash groups must be non-empty");
+static_assert(VAULT_HOSTNAME_MAX >= VAULT_NAME_MAX, "a hostname needs at least a name's room");
+static_assert(VAULT_PHRASE_MAX > VAULT_PASSWORD_MAX, "a seed phrase needs more room than a password");

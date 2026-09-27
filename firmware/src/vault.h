@@ -6,14 +6,27 @@
 #include <string>
 #include <vector>
 
+enum class EntryType : uint8_t { Generic, Website, Crypto };
+
 struct VaultEntry {
-  uint32_t id;
+  uint32_t id = 0;
+  EntryType type = EntryType::Generic;
+  // Generic name, website hostname, or crypto label.
   std::string name;
+  // Website only.
+  std::string username;
+  // Generic and website.
   std::string password;
+  // Crypto words.
+  std::string phrase;
 };
 
+const char* entryTypeName(EntryType type);
+// False when text is not generic, website, or crypto.
+bool entryTypeFrom(const char* text, EntryType& type);
+
 // Plaintext vault in NVS (device flash). No PIN and no encryption.
-// A missing vault is empty and valid.
+// A missing vault is empty and valid. A stored entry with no type is generic.
 class Vault {
  public:
   // Loads flash. Returns false when flash cannot be read; entries stay empty
@@ -34,8 +47,12 @@ class Vault {
   // Slot is 0-based within selectableCount(). False when out of range.
   bool selectSlot(int slot);
 
-  bool add(const char* name, const char* password, uint32_t& newId, const char*& error);
-  bool edit(uint32_t id, const char* name, const char* password, const char*& error);
+  // Unused strings for the type are ignored. newId is set on success.
+  bool add(EntryType type, const char* name, const char* username, const char* password,
+           const char* phrase, uint32_t& newId, const char*& error);
+  // Rejects a type that differs from the stored entry.
+  bool edit(uint32_t id, EntryType type, const char* name, const char* username,
+            const char* password, const char* phrase, const char*& error);
   bool remove(uint32_t id, const char*& error);
 
   const std::vector<VaultEntry>& entries() const { return entries_; }

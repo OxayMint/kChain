@@ -18,9 +18,15 @@ import { AgentVault, usbTyperStatus, type UsbTyperStatus } from "@/lib/agent-ses
 import { generatePassword } from "@/lib/generate-password";
 import {
   snapshotFrom,
+  validateHostname,
+  validateLabel,
   validateName,
   validatePassword,
+  validatePhrase,
+  validateUsername,
+  type DeviceCommand,
   type DeviceEvent,
+  type EntryType,
   type VaultEntry,
   type VaultSnapshot,
 } from "@/lib/protocol";
@@ -50,14 +56,19 @@ function messageOf(error: unknown): string {
 export function VaultEditor() {
   const [status, setStatus] = useState<Status>({ phase: "disconnected" });
   const [busy, setBusy] = useState<Busy>(null);
+  const [kind, setKind] = useState<EntryType>("generic");
   const [name, setName] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [phrase, setPhrase] = useState("");
   const [showAddPassword, setShowAddPassword] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<Record<number, boolean>>({});
   const [editing, setEditing] = useState<VaultEntry | null>(null);
   const [editName, setEditName] = useState("");
+  const [editUsername, setEditUsername] = useState("");
   const [editPassword, setEditPassword] = useState("");
+  const [editPhrase, setEditPhrase] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<VaultEntry | null>(null);
   const sessionRef = useRef<VaultSession | null>(null);
@@ -151,8 +162,17 @@ export function VaultEditor() {
       if (event.event === "selected") {
         return {
           ...current,
-          snapshot: { ...current.snapshot, selectedId: event.id },
-          notice: event.name ? `Selected ${event.name}.` : current.notice,
+          snapshot: {
+            ...current.snapshot,
+            selectedId: event.id,
+            active: true,
+          },
+        };
+      }
+      if (event.event === "idle") {
+        return {
+          ...current,
+          snapshot: { ...current.snapshot, active: false },
         };
       }
       if (event.event === "typed") {
@@ -235,7 +255,9 @@ export function VaultEditor() {
       setStatus({ phase: "ready", snapshot, notice: null });
       if (kind === "add") {
         setName("");
+        setUsername("");
         setPassword("");
+        setPhrase("");
         setShowAddPassword(false);
       }
       if (kind === "edit") setEditing(null);
@@ -252,18 +274,14 @@ export function VaultEditor() {
 
   async function onAdd(event: React.FormEvent) {
     event.preventDefault();
-    const nameError = validateName(name);
-    const passwordError = validatePassword(password);
-    if (nameError || passwordError) {
-      setFormError(nameError ?? passwordError);
+    const fieldError = entryError(kind, name, username, password, phrase);
+    if (fieldError) {
+      setFormError(fieldError);
       return;
     }
+    const command = entryCommand("add", kind, name, username, password, phrase);
     await mutate("add", async (session) => {
-      const response = await session.request({
-        op: "add",
-        name,
-        password,
-      });
+      const response = await session.request(command);
       return snapshotFrom(response);
     });
   }
@@ -271,20 +289,28 @@ export function VaultEditor() {
   async function onEdit(event: React.FormEvent) {
     event.preventDefault();
     if (!editing) return;
-    const nameError = validateName(editName);
-    const passwordError = validatePassword(editPassword);
-    if (nameError || passwordError) {
-      setEditError(nameError ?? passwordError);
+    const fieldError = entryError(
+      editing.type,
+      editName,
+      editUsername,
+      editPassword,
+      editPhrase,
+    );
+    if (fieldError) {
+      setEditError(fieldError);
       return;
     }
-    const id = editing.id;
+    const command = entryCommand(
+      "edit",
+      editing.type,
+      editName,
+      editUsername,
+      editPassword,
+      editPhrase,
+      editing.id,
+    );
     await mutate("edit", async (session) => {
-      const response = await session.request({
-        op: "edit",
-        id,
-        name: editName,
-        password: editPassword,
-      });
+      const response = await session.request(command);
       return snapshotFrom(response);
     });
   }
@@ -300,7 +326,9 @@ export function VaultEditor() {
 
   function openEdit(entry: VaultEntry) {
     setEditName(entry.name);
+    setEditUsername(entry.username);
     setEditPassword(entry.password);
+    setEditPhrase(entry.phrase);
     setEditError(null);
     setEditing(entry);
   }
@@ -319,8 +347,9 @@ export function VaultEditor() {
               kChain
             </h1>
             <p className="mt-3 text-base leading-7 text-muted-foreground">
-              A password device. Turn the wheel to choose a password, then
-              double-tap to type it. Use this page to add and change passwords.
+              Turn the wheel to choose an entry, then double-tap to type it.
+              This page shows which entry is on the device, and adds and changes
+              entries.
             </p>
           </div>
           <KeyboardStatus snapshot={snapshot} typer={typer} />
@@ -385,7 +414,7 @@ export function VaultEditor() {
           {status.phase === "loading" && (
             <div role="status" className="space-y-3">
               <p className="text-sm text-muted-foreground">
-                Loading passwords…
+                Loading entries…
               </p>
               <div className="h-20 animate-pulse rounded-xl bg-muted" />
               <div className="h-20 animate-pulse rounded-xl bg-muted" />
@@ -438,9 +467,11 @@ export function VaultEditor() {
                 </Alert>
               )}
 
+              <p className="text-sm text-muted-foreground">{deviceStatus(snapshot)}</p>
+
               {snapshot.entries.length === 0 ? (
                 <section className="rounded-xl border border-dashed border-border px-5 py-10 text-center">
-                  <h2 className="font-display text-3xl">No passwords yet</h2>
+                  <h2 className="font-display text-3xl">No entries yet</h2>
                   <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
                     Add one below.
                   </p>
@@ -449,18 +480,18 @@ export function VaultEditor() {
                 <section className="space-y-3">
                   <h2 className="text-sm text-muted-foreground">
                     {snapshot.entries.length === 1
-                      ? "1 password"
-                      : `${snapshot.entries.length} passwords`}
+                      ? "1 entry"
+                      : `${snapshot.entries.length} entries`}
                   </h2>
                   <ul className="space-y-3">
                     {snapshot.entries.map((entry) => {
-                      const selected = entry.id === snapshot.selectedId;
+                      const awake = snapshot.active && entry.id === snapshot.selectedId;
                       const visible = revealed[entry.id] === true;
                       return (
                         <li
                           key={entry.id}
                           className={
-                            selected
+                            awake
                               ? "rounded-xl border border-primary bg-card p-4"
                               : "rounded-xl border border-border bg-card p-4"
                           }
@@ -471,15 +502,16 @@ export function VaultEditor() {
                                 <h3 className="truncate text-base font-medium">
                                   {entry.name}
                                 </h3>
-                                {selected && (
+                                <span className="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
+                                  {typeLabel(entry.type)}
+                                </span>
+                                {awake && (
                                   <span className="rounded-full bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground">
-                                    Selected
+                                    On device
                                   </span>
                                 )}
                               </div>
-                              <p className="mt-2 font-mono text-sm break-all text-foreground">
-                                {visible ? entry.password : "••••••••"}
-                              </p>
+                              <EntrySecrets entry={entry} visible={visible} />
                             </div>
                             <div className="flex flex-wrap gap-2">
                               <Button
@@ -527,10 +559,20 @@ export function VaultEditor() {
                 noValidate
                 className="rounded-xl border border-border bg-card p-4 sm:p-5"
               >
-                <h2 className="font-display text-3xl">Add a password</h2>
+                <h2 className="font-display text-3xl">Add an entry</h2>
+                <div className="mt-4">
+                  <TypeSwitch
+                    value={kind}
+                    disabled={busy !== null}
+                    onChange={(next) => {
+                      setKind(next);
+                      setFormError(null);
+                    }}
+                  />
+                </div>
                 <div className="mt-4 grid gap-4 sm:grid-cols-2">
                   <div className="grid gap-2">
-                    <Label htmlFor="add-name">Name</Label>
+                    <Label htmlFor="add-name">{nameLabel(kind)}</Label>
                     <Input
                       id="add-name"
                       name="name"
@@ -540,43 +582,74 @@ export function VaultEditor() {
                       onChange={(event) => setName(event.target.value)}
                     />
                   </div>
-                  <div className="grid gap-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <Label htmlFor="add-password">Password</Label>
-                      <button
-                        type="button"
-                        className="text-xs text-muted-foreground underline-offset-4 hover:underline"
-                        onClick={() => setShowAddPassword((current) => !current)}
-                      >
-                        {showAddPassword ? "Hide" : "Show"}
-                      </button>
-                    </div>
-                    <Input
-                      id="add-password"
-                      name="password"
-                      type={showAddPassword ? "text" : "password"}
-                      autoComplete="off"
-                      spellCheck={false}
-                      value={password}
-                      disabled={busy !== null}
-                      onChange={(event) => setPassword(event.target.value)}
-                    />
-                    <div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
+                  {kind === "website" && (
+                    <div className="grid gap-2">
+                      <Label htmlFor="add-username">Username or email</Label>
+                      <Input
+                        id="add-username"
+                        name="username"
+                        autoComplete="off"
+                        spellCheck={false}
+                        value={username}
                         disabled={busy !== null}
-                        onClick={() => {
-                          setPassword(generatePassword());
-                          setShowAddPassword(true);
-                          setFormError(null);
-                        }}
-                      >
-                        Generate password
-                      </Button>
+                        onChange={(event) => setUsername(event.target.value)}
+                      />
                     </div>
-                  </div>
+                  )}
+                  {kind === "crypto" ? (
+                    <div className="grid gap-2 sm:col-span-2">
+                      <Label htmlFor="add-phrase">Words</Label>
+                      <textarea
+                        id="add-phrase"
+                        name="phrase"
+                        autoComplete="off"
+                        spellCheck={false}
+                        rows={3}
+                        value={phrase}
+                        disabled={busy !== null}
+                        onChange={(event) => setPhrase(event.target.value)}
+                        className="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-2 font-mono text-sm transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30"
+                      />
+                    </div>
+                  ) : (
+                    <div className="grid gap-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <Label htmlFor="add-password">Password</Label>
+                        <button
+                          type="button"
+                          className="text-xs text-muted-foreground underline-offset-4 hover:underline"
+                          onClick={() => setShowAddPassword((current) => !current)}
+                        >
+                          {showAddPassword ? "Hide" : "Show"}
+                        </button>
+                      </div>
+                      <Input
+                        id="add-password"
+                        name="password"
+                        type={showAddPassword ? "text" : "password"}
+                        autoComplete="off"
+                        spellCheck={false}
+                        value={password}
+                        disabled={busy !== null}
+                        onChange={(event) => setPassword(event.target.value)}
+                      />
+                      <div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={busy !== null}
+                          onClick={() => {
+                            setPassword(generatePassword());
+                            setShowAddPassword(true);
+                            setFormError(null);
+                          }}
+                        >
+                          Generate password
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 {formError && (
                   <p className="mt-3 text-sm text-destructive" role="alert">
@@ -606,14 +679,12 @@ export function VaultEditor() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Edit entry</DialogTitle>
-            <DialogDescription>
-              Change the name or password.
-            </DialogDescription>
+            <DialogDescription>{editDescription(editing?.type ?? "generic")}</DialogDescription>
           </DialogHeader>
           <form onSubmit={(event) => void onEdit(event)} noValidate>
             <div className="grid gap-4">
               <div className="grid gap-2">
-                <Label htmlFor="edit-name">Name</Label>
+                <Label htmlFor="edit-name">{nameLabel(editing?.type ?? "generic")}</Label>
                 <Input
                   id="edit-name"
                   value={editName}
@@ -621,32 +692,61 @@ export function VaultEditor() {
                   onChange={(event) => setEditName(event.target.value)}
                 />
               </div>
-              <div className="grid gap-2">
-                <Label htmlFor="edit-password">Password</Label>
-                <Input
-                  id="edit-password"
-                  type="text"
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={editPassword}
-                  disabled={busy === "edit"}
-                  onChange={(event) => setEditPassword(event.target.value)}
-                />
-                <div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
+              {editing?.type === "website" && (
+                <div className="grid gap-2">
+                  <Label htmlFor="edit-username">Username or email</Label>
+                  <Input
+                    id="edit-username"
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={editUsername}
                     disabled={busy === "edit"}
-                    onClick={() => {
-                      setEditPassword(generatePassword());
-                      setEditError(null);
-                    }}
-                  >
-                    Generate password
-                  </Button>
+                    onChange={(event) => setEditUsername(event.target.value)}
+                  />
                 </div>
-              </div>
+              )}
+              {editing?.type === "crypto" ? (
+                <div className="grid gap-2">
+                  <Label htmlFor="edit-phrase">Words</Label>
+                  <textarea
+                    id="edit-phrase"
+                    autoComplete="off"
+                    spellCheck={false}
+                    rows={3}
+                    value={editPhrase}
+                    disabled={busy === "edit"}
+                    onChange={(event) => setEditPhrase(event.target.value)}
+                    className="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-2 font-mono text-sm transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30"
+                  />
+                </div>
+              ) : (
+                <div className="grid gap-2">
+                  <Label htmlFor="edit-password">Password</Label>
+                  <Input
+                    id="edit-password"
+                    type="text"
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={editPassword}
+                    disabled={busy === "edit"}
+                    onChange={(event) => setEditPassword(event.target.value)}
+                  />
+                  <div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={busy === "edit"}
+                      onClick={() => {
+                        setEditPassword(generatePassword());
+                        setEditError(null);
+                      }}
+                    >
+                      Generate password
+                    </Button>
+                  </div>
+                </div>
+              )}
               {editError && (
                 <p className="text-sm text-destructive" role="alert">
                   {editError}
@@ -702,6 +802,136 @@ export function VaultEditor() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function entryError(
+  type: EntryType,
+  name: string,
+  username: string,
+  password: string,
+  phrase: string,
+): string | null {
+  if (type === "website") {
+    return validateHostname(name) ?? validateUsername(username) ?? validatePassword(password);
+  }
+  if (type === "crypto") return validateLabel(name) ?? validatePhrase(phrase);
+  return validateName(name) ?? validatePassword(password);
+}
+
+function entryCommand(
+  op: "add" | "edit",
+  type: EntryType,
+  name: string,
+  username: string,
+  password: string,
+  phrase: string,
+  id?: number,
+): DeviceCommand {
+  if (type === "website") {
+    return op === "add"
+      ? { op, type, name, username, password }
+      : { op, id: id ?? 0, type, name, username, password };
+  }
+  if (type === "crypto") {
+    return op === "add" ? { op, type, name, phrase } : { op, id: id ?? 0, type, name, phrase };
+  }
+  return op === "add"
+    ? { op, type: "generic", name, password }
+    : { op, id: id ?? 0, type: "generic", name, password };
+}
+
+function deviceStatus(snapshot: VaultSnapshot): string {
+  if (!snapshot.active || snapshot.selectedId == null) return "Device is idle";
+  const index = snapshot.entries.findIndex((entry) => entry.id === snapshot.selectedId);
+  if (index < 0) return "Device is idle";
+  return `On the device: ${index + 1}. ${snapshot.entries[index].name}`;
+}
+
+function typeLabel(type: EntryType): string {
+  if (type === "website") return "Website";
+  if (type === "crypto") return "Crypto";
+  return "Generic";
+}
+
+function nameLabel(type: EntryType): string {
+  if (type === "website") return "Hostname";
+  if (type === "crypto") return "Label";
+  return "Name";
+}
+
+function editDescription(type: EntryType): string {
+  if (type === "website") return "Change the hostname, username, or password.";
+  if (type === "crypto") return "Change the label or words.";
+  return "Change the name or password.";
+}
+
+function TypeSwitch({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: EntryType;
+  disabled: boolean;
+  onChange: (value: EntryType) => void;
+}) {
+  const options: { id: EntryType; label: string }[] = [
+    { id: "generic", label: "Generic" },
+    { id: "website", label: "Website" },
+    { id: "crypto", label: "Crypto" },
+  ];
+  return (
+    <div className="flex flex-wrap gap-2" role="group" aria-label="Entry type">
+      {options.map((option) => (
+        <Button
+          key={option.id}
+          type="button"
+          size="sm"
+          variant={value === option.id ? "default" : "outline"}
+          disabled={disabled}
+          aria-pressed={value === option.id}
+          onClick={() => onChange(option.id)}
+        >
+          {option.label}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+function EntrySecrets({ entry, visible }: { entry: VaultEntry; visible: boolean }) {
+  if (entry.type === "crypto") {
+    return <Secret value={entry.phrase} visible={visible} />;
+  }
+  if (entry.type === "website") {
+    return (
+      <div className="mt-2 space-y-2">
+        <Secret label="Username" value={entry.username} visible={visible} />
+        <Secret label="Password" value={entry.password} visible={visible} />
+      </div>
+    );
+  }
+  return (
+    <div className="mt-2">
+      <Secret value={entry.password} visible={visible} />
+    </div>
+  );
+}
+
+function Secret({
+  label,
+  value,
+  visible,
+}: {
+  label?: string;
+  value: string;
+  visible: boolean;
+}) {
+  return (
+    <p className="font-mono text-sm break-all text-foreground">
+      {label && <span className="mr-2 font-sans text-muted-foreground">{label}</span>}
+      {visible ? value : "••••••••"}
+    </p>
   );
 }
 

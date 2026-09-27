@@ -21,7 +21,140 @@ bool containsId(const std::vector<VaultEntry>& entries, uint32_t id) {
   return false;
 }
 
+const char* textOrEmpty(const char* text) { return text == nullptr ? "" : text; }
+
+bool printableAscii(const char* text, size_t maxLen, const char* emptyError, const char* lengthError,
+                    const char* asciiError, const char*& error) {
+  if (text == nullptr || text[0] == '\0') {
+    error = emptyError;
+    return false;
+  }
+  const size_t length = strlen(text);
+  if (length > maxLen) {
+    error = lengthError;
+    return false;
+  }
+  for (size_t i = 0; i < length; i++) {
+    const unsigned char c = static_cast<unsigned char>(text[i]);
+    if (c < 0x20 || c > 0x7e) {
+      error = asciiError;
+      return false;
+    }
+  }
+  return true;
+}
+
+bool vaultHostnameOk(const char* hostname, const char*& error) {
+  return printableAscii(hostname, VAULT_HOSTNAME_MAX, "Hostname is required.",
+                        "Hostname must be 253 characters or fewer.",
+                        "Hostname must be printable ASCII.", error);
+}
+
+bool vaultUsernameOk(const char* username, const char*& error) {
+  return printableAscii(username, VAULT_USERNAME_MAX, "Username is required.",
+                        "Username must be 128 characters or fewer.",
+                        "Username must be printable ASCII so it can be typed.", error);
+}
+
+bool vaultPhraseOk(const char* phrase, const char*& error) {
+  if (phrase == nullptr || phrase[0] == '\0') {
+    error = "Phrase is required.";
+    return false;
+  }
+  const size_t length = strlen(phrase);
+  if (length > VAULT_PHRASE_MAX) {
+    error = "Phrase must be 256 characters or fewer.";
+    return false;
+  }
+  if (phrase[0] == ' ' || phrase[length - 1] == ' ') {
+    error = "Phrase cannot start or end with a space.";
+    return false;
+  }
+  int words = 0;
+  bool inWord = false;
+  for (size_t i = 0; i < length; i++) {
+    const unsigned char c = static_cast<unsigned char>(phrase[i]);
+    if (c == ' ') {
+      if (!inWord) {
+        error = "Phrase words must be separated by a single space.";
+        return false;
+      }
+      inWord = false;
+      continue;
+    }
+    if (c < 0x21 || c > 0x7e) {
+      error = "Phrase must be printable ASCII.";
+      return false;
+    }
+    if (!inWord) {
+      words++;
+      inWord = true;
+    }
+  }
+  if (words < 2) {
+    error = "Phrase must be at least two words.";
+    return false;
+  }
+  return true;
+}
+
+bool entryFieldsOk(const VaultEntry& entry, const char*& error) {
+  switch (entry.type) {
+    case EntryType::Website:
+      return vaultHostnameOk(entry.name.c_str(), error) &&
+             vaultUsernameOk(entry.username.c_str(), error) &&
+             vaultPasswordOk(entry.password.c_str(), error);
+    case EntryType::Crypto:
+      return vaultNameOk(entry.name.c_str(), error) && vaultPhraseOk(entry.phrase.c_str(), error);
+    case EntryType::Generic:
+      return vaultNameOk(entry.name.c_str(), error) && vaultPasswordOk(entry.password.c_str(), error);
+  }
+  error = "Type must be generic, website, or crypto.";
+  return false;
+}
+
+void keepUsedFields(VaultEntry& entry) {
+  if (entry.type != EntryType::Website) entry.username.clear();
+  if (entry.type == EntryType::Crypto) entry.password.clear();
+  else entry.phrase.clear();
+}
+
+bool loadFailed(Preferences& prefs, const char*& loadError) {
+  prefs.end();
+  loadError = "The vault on flash could not be read, so it was left unchanged.";
+  return false;
+}
+
 }  // namespace
+
+const char* entryTypeName(EntryType type) {
+  switch (type) {
+    case EntryType::Website:
+      return "website";
+    case EntryType::Crypto:
+      return "crypto";
+    case EntryType::Generic:
+      return "generic";
+  }
+  return "generic";
+}
+
+bool entryTypeFrom(const char* text, EntryType& type) {
+  if (text == nullptr) return false;
+  if (strcmp(text, "generic") == 0) {
+    type = EntryType::Generic;
+    return true;
+  }
+  if (strcmp(text, "website") == 0) {
+    type = EntryType::Website;
+    return true;
+  }
+  if (strcmp(text, "crypto") == 0) {
+    type = EntryType::Crypto;
+    return true;
+  }
+  return false;
+}
 
 bool vaultNameOk(const char* name, const char*& error) {
   if (name == nullptr || name[0] == '\0') {
@@ -44,23 +177,9 @@ bool vaultNameOk(const char* name, const char*& error) {
 }
 
 bool vaultPasswordOk(const char* password, const char*& error) {
-  if (password == nullptr || password[0] == '\0') {
-    error = "Password is required.";
-    return false;
-  }
-  const size_t length = strlen(password);
-  if (length > VAULT_PASSWORD_MAX) {
-    error = "Password must be 128 characters or fewer.";
-    return false;
-  }
-  for (size_t i = 0; i < length; i++) {
-    const unsigned char c = static_cast<unsigned char>(password[i]);
-    if (c < 0x20 || c > 0x7e) {
-      error = "Password must be printable ASCII so it can be typed.";
-      return false;
-    }
-  }
-  return true;
+  return printableAscii(password, VAULT_PASSWORD_MAX, "Password is required.",
+                        "Password must be 128 characters or fewer.",
+                        "Password must be printable ASCII so it can be typed.", error);
 }
 
 bool Vault::begin() {
@@ -101,71 +220,54 @@ bool Vault::load() {
   const String idsRaw = prefs.getString("ids", "[]");
   JsonDocument idsDoc;
   const DeserializationError idsError = deserializeJson(idsDoc, idsRaw.c_str());
-  if (idsError || !idsDoc.is<JsonArray>()) {
-    prefs.end();
-    loadError_ = "The vault on flash could not be read, so it was left unchanged.";
-    return false;
-  }
+  if (idsError || !idsDoc.is<JsonArray>()) return loadFailed(prefs, loadError_);
 
   const JsonArray ids = idsDoc.as<JsonArray>();
-  if (ids.size() > static_cast<size_t>(VAULT_MAX_ENTRIES)) {
-    prefs.end();
-    loadError_ = "The vault on flash could not be read, so it was left unchanged.";
-    return false;
-  }
+  if (ids.size() > static_cast<size_t>(VAULT_MAX_ENTRIES)) return loadFailed(prefs, loadError_);
 
   std::vector<VaultEntry> loaded;
   std::vector<uint32_t> loadedIds;
   uint32_t maxId = 0;
 
   for (JsonVariant value : ids) {
-    if (!value.is<uint32_t>()) {
-      prefs.end();
-      loadError_ = "The vault on flash could not be read, so it was left unchanged.";
-      return false;
-    }
+    if (!value.is<uint32_t>()) return loadFailed(prefs, loadError_);
     const uint32_t id = value.as<uint32_t>();
-    if (id == 0) {
-      prefs.end();
-      loadError_ = "The vault on flash could not be read, so it was left unchanged.";
-      return false;
-    }
+    if (id == 0) return loadFailed(prefs, loadError_);
     for (size_t i = 0; i < loadedIds.size(); i++) {
-      if (loadedIds[i] == id) {
-        prefs.end();
-        loadError_ = "The vault on flash could not be read, so it was left unchanged.";
-        return false;
-      }
+      if (loadedIds[i] == id) return loadFailed(prefs, loadError_);
     }
 
     const std::string key = entryKey(id);
     const String raw = prefs.getString(key.c_str(), "");
-    if (raw.isEmpty()) {
-      prefs.end();
-      loadError_ = "The vault on flash could not be read, so it was left unchanged.";
-      return false;
-    }
+    if (raw.isEmpty()) return loadFailed(prefs, loadError_);
 
     JsonDocument entryDoc;
-    if (deserializeJson(entryDoc, raw.c_str())) {
-      prefs.end();
-      loadError_ = "The vault on flash could not be read, so it was left unchanged.";
-      return false;
-    }
-
-    const char* name = entryDoc["name"];
-    const char* password = entryDoc["password"];
-    const char* fieldError = nullptr;
-    if (!vaultNameOk(name, fieldError) || !vaultPasswordOk(password, fieldError)) {
-      prefs.end();
-      loadError_ = "The vault on flash could not be read, so it was left unchanged.";
-      return false;
-    }
+    if (deserializeJson(entryDoc, raw.c_str())) return loadFailed(prefs, loadError_);
 
     VaultEntry entry;
     entry.id = id;
-    entry.name = name;
+    // Records written before types existed are name-and-password pairs.
+    if (entryDoc["type"].isUnbound()) {
+      entry.type = EntryType::Generic;
+    } else if (!entryDoc["type"].is<const char*>() ||
+               !entryTypeFrom(entryDoc["type"].as<const char*>(), entry.type)) {
+      return loadFailed(prefs, loadError_);
+    }
+
+    const char* name = entryDoc["name"].is<const char*>() ? entryDoc["name"].as<const char*>() : nullptr;
+    const char* username =
+        entryDoc["username"].is<const char*>() ? entryDoc["username"].as<const char*>() : "";
+    const char* password =
+        entryDoc["password"].is<const char*>() ? entryDoc["password"].as<const char*>() : "";
+    const char* phrase = entryDoc["phrase"].is<const char*>() ? entryDoc["phrase"].as<const char*>() : "";
+    entry.name = textOrEmpty(name);
+    entry.username = username;
     entry.password = password;
+    entry.phrase = phrase;
+    const char* fieldError = nullptr;
+    if (!entryFieldsOk(entry, fieldError)) return loadFailed(prefs, loadError_);
+    keepUsedFields(entry);
+
     loaded.push_back(entry);
     loadedIds.push_back(id);
     if (id > maxId) maxId = id;
@@ -185,11 +287,15 @@ bool Vault::save() {
 
   for (size_t i = 0; i < entries_.size(); i++) {
     JsonDocument doc;
-    doc["name"] = entries_[i].name;
-    doc["password"] = entries_[i].password;
+    const VaultEntry& entry = entries_[i];
+    doc["type"] = entryTypeName(entry.type);
+    doc["name"] = entry.name;
+    if (entry.type == EntryType::Website) doc["username"] = entry.username;
+    if (entry.type != EntryType::Crypto) doc["password"] = entry.password;
+    if (entry.type == EntryType::Crypto) doc["phrase"] = entry.phrase;
     std::string payload;
     serializeJson(doc, payload);
-    const std::string key = entryKey(entries_[i].id);
+    const std::string key = entryKey(entry.id);
     if (prefs.putString(key.c_str(), payload.c_str()) == 0) {
       prefs.end();
       return false;
@@ -255,12 +361,12 @@ int Vault::indexOf(uint32_t id) const {
   return -1;
 }
 
-bool Vault::add(const char* name, const char* password, uint32_t& newId, const char*& error) {
+bool Vault::add(EntryType type, const char* name, const char* username, const char* password,
+                const char* phrase, uint32_t& newId, const char*& error) {
   if (!mutable_) {
     error = loadError_ == nullptr ? "Could not write the vault to flash." : loadError_;
     return false;
   }
-  if (!vaultNameOk(name, error) || !vaultPasswordOk(password, error)) return false;
   if (size() >= VAULT_MAX_ENTRIES) {
     error = "The vault already holds 32 entries.";
     return false;
@@ -270,15 +376,21 @@ bool Vault::add(const char* name, const char* password, uint32_t& newId, const c
     return false;
   }
 
+  VaultEntry entry;
+  entry.type = type;
+  entry.name = textOrEmpty(name);
+  entry.username = textOrEmpty(username);
+  entry.password = textOrEmpty(password);
+  entry.phrase = textOrEmpty(phrase);
+  if (!entryFieldsOk(entry, error)) return false;
+  keepUsedFields(entry);
+
   const std::vector<VaultEntry> backup = entries_;
   const std::vector<uint32_t> backupIds = persistedIds_;
   const uint32_t backupNext = nextId_;
   const int backupSelected = selected_;
 
-  VaultEntry entry;
   entry.id = nextId_++;
-  entry.name = name;
-  entry.password = password;
   entries_.push_back(entry);
   if (selected_ < 0) selected_ = 0;
 
@@ -295,24 +407,35 @@ bool Vault::add(const char* name, const char* password, uint32_t& newId, const c
   return true;
 }
 
-bool Vault::edit(uint32_t id, const char* name, const char* password, const char*& error) {
+bool Vault::edit(uint32_t id, EntryType type, const char* name, const char* username,
+                 const char* password, const char* phrase, const char*& error) {
   if (!mutable_) {
     error = loadError_ == nullptr ? "Could not write the vault to flash." : loadError_;
     return false;
   }
-  if (!vaultNameOk(name, error) || !vaultPasswordOk(password, error)) return false;
 
   const int index = indexOf(id);
   if (index < 0) {
     error = "No entry with that id.";
     return false;
   }
+  if (entries_[static_cast<size_t>(index)].type != type) {
+    error = "Type cannot be changed.";
+    return false;
+  }
+
+  VaultEntry next = entries_[static_cast<size_t>(index)];
+  next.name = textOrEmpty(name);
+  next.username = textOrEmpty(username);
+  next.password = textOrEmpty(password);
+  next.phrase = textOrEmpty(phrase);
+  if (!entryFieldsOk(next, error)) return false;
+  keepUsedFields(next);
 
   const std::vector<VaultEntry> backup = entries_;
   const std::vector<uint32_t> backupIds = persistedIds_;
 
-  entries_[static_cast<size_t>(index)].name = name;
-  entries_[static_cast<size_t>(index)].password = password;
+  entries_[static_cast<size_t>(index)] = next;
 
   if (!save()) {
     entries_ = backup;

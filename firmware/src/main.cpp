@@ -4,7 +4,6 @@
 #include "config.h"
 #include "encoder_input.h"
 #include "serial_link.h"
-#include "status_led.h"
 #include "vault.h"
 
 ButtonInput buttonInput;
@@ -12,7 +11,6 @@ EncoderInput encoderInput;
 Input& input = buttonInput;
 Vault vault;
 SerialLink serialLink;
-StatusLed led;
 
 // The C3 HAL keeps the Bluetooth controller unless this returns false.
 // initArduino then releases that memory before setup, so the radio cannot start.
@@ -35,7 +33,6 @@ void setup() {
   Serial.begin(SERIAL_BAUD);
 
   input.begin();
-  led.begin();
   vault.begin();
   encoderInput.begin();
   serialLink.emitReady(vault);
@@ -44,7 +41,8 @@ void setup() {
 void goIdle() {
   activity = Activity::Idle;
   wakeGesture = false;
-  led.showIdle();
+  serialLink.setActive(false);
+  serialLink.emitIdle();
 }
 
 bool typeSelected() {
@@ -83,6 +81,7 @@ void stepSelection(int delta) {
   int slot = (index + delta) % count;
   if (slot < 0) slot += count;
   activity = Activity::Active;
+  serialLink.setActive(true);
   lastActivityMs = millis();
   applySelection(slot);
 }
@@ -91,13 +90,14 @@ void loop() {
   serialLink.poll(vault);
 
   // Tap, double tap, and hold. A press wakes immediately, before the
-  // gesture is classified, so the LED does not wait out the double-tap window.
+  // gesture is classified.
   const InputEvent event = buttonInput.poll();
   if (buttonInput.consumePress()) {
     if (activity == Activity::Idle) {
       if (vault.selectSlot(0)) {
         activity = Activity::Active;
         wakeGesture = true;
+        serialLink.setActive(true);
         lastActivityMs = millis();
         serialLink.emitSelected(vault);
       }
@@ -127,17 +127,10 @@ void loop() {
     if (count == 0 || millis() - lastActivityMs >= ACTIVE_IDLE_MS) {
       goIdle();
     } else {
-      int index = vault.selectedIndex();
-      if (index < 0 || index >= count) {
-        applySelection(index < 0 ? 0 : count - 1);
-        index = vault.selectedIndex();
-      }
-      led.showCount(index + 1);
+      const int index = vault.selectedIndex();
+      if (index < 0 || index >= count) applySelection(index < 0 ? 0 : count - 1);
     }
-  } else {
-    led.showIdle();
   }
-  led.poll();
 
   bool usbReady = false;
   if (serialLink.consumeUsbChange(usbReady)) serialLink.emitUsb(usbReady);
