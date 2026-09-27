@@ -5,7 +5,6 @@
 #include "encoder_input.h"
 #include "keyboard_out.h"
 #include "serial_link.h"
-#include "status_led.h"
 #include "vault.h"
 
 ButtonInput buttonInput;
@@ -14,7 +13,6 @@ Input& input = buttonInput;
 Vault vault;
 KeyboardOut keyboard;
 SerialLink serialLink;
-StatusLed led;
 
 enum class Activity : uint8_t { Idle, Active };
 
@@ -33,7 +31,6 @@ void setup() {
   Serial.begin(SERIAL_BAUD);
 
   input.begin();
-  led.begin();
   vault.begin();
   keyboard.begin();
   // After Bluetooth. Starting the radio clears GPIO interrupts attached earlier.
@@ -44,7 +41,24 @@ void setup() {
 void goIdle() {
   activity = Activity::Idle;
   wakeGesture = false;
-  led.showIdle();
+  serialLink.setActive(false);
+  serialLink.emitIdle();
+}
+
+void typeOnKeyboard(const VaultEntry& entry) {
+  switch (entry.type) {
+    case EntryType::Website:
+      keyboard.typeText(entry.username);
+      keyboard.typeTab();
+      keyboard.typeText(entry.password);
+      break;
+    case EntryType::Crypto:
+      keyboard.typeText(entry.phrase);
+      break;
+    case EntryType::Generic:
+      keyboard.typeText(entry.password);
+      break;
+  }
 }
 
 bool typeSelected() {
@@ -71,7 +85,7 @@ bool typeSelected() {
         "Bluetooth is not connected, and the USB typer is not running.");
     return false;
   }
-  keyboard.typeText(entry.password);
+  typeOnKeyboard(entry);
   serialLink.emitTyped(entry);
   return true;
 }
@@ -91,6 +105,7 @@ void stepSelection(int delta) {
   int slot = (index + delta) % count;
   if (slot < 0) slot += count;
   activity = Activity::Active;
+  serialLink.setActive(true);
   lastActivityMs = millis();
   applySelection(slot);
 }
@@ -99,13 +114,14 @@ void loop() {
   serialLink.poll(vault, keyboard);
 
   // Tap, double tap, and hold. A press wakes immediately, before the
-  // gesture is classified, so the LED does not wait out the double-tap window.
+  // gesture is classified.
   const InputEvent event = buttonInput.poll();
   if (buttonInput.consumePress()) {
     if (activity == Activity::Idle) {
       if (vault.selectSlot(0)) {
         activity = Activity::Active;
         wakeGesture = true;
+        serialLink.setActive(true);
         lastActivityMs = millis();
         serialLink.emitSelected(vault);
       }
@@ -135,17 +151,10 @@ void loop() {
     if (count == 0 || millis() - lastActivityMs >= ACTIVE_IDLE_MS) {
       goIdle();
     } else {
-      int index = vault.selectedIndex();
-      if (index < 0 || index >= count) {
-        applySelection(index < 0 ? 0 : count - 1);
-        index = vault.selectedIndex();
-      }
-      led.showCount(index + 1);
+      const int index = vault.selectedIndex();
+      if (index < 0 || index >= count) applySelection(index < 0 ? 0 : count - 1);
     }
-  } else {
-    led.showIdle();
   }
-  led.poll();
 
   bool connected = false;
   if (keyboard.consumeConnectionChange(connected)) serialLink.emitKeyboard(connected);

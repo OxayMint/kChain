@@ -13,6 +13,8 @@ class SerialLink {
  public:
   void poll(Vault& vault, const KeyboardOut& keyboard);
 
+  void setActive(bool active) { active_ = active; }
+
   bool usbTypingReady() const;
   // True once, when the USB typer becomes ready or goes quiet.
   bool consumeUsbChange(bool& ready);
@@ -22,13 +24,15 @@ class SerialLink {
 
   void emitReady(const Vault& vault, bool keyboardConnected);
   void emitSelected(const Vault& vault);
+  void emitIdle();
   void emitTyped(const VaultEntry& entry);
   void emitTypeFailed(const char* error);
   void emitKeyboard(bool connected);
   void emitUsb(bool ready);
 
  private:
-  char line_[512] = {};
+  char line_[1024] = {};
+  bool active_ = false;
   size_t length_ = 0;
   bool discarding_ = false;
   bool typeAckPending_ = false;

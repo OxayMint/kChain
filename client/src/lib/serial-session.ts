@@ -209,12 +209,12 @@ export class SerialVault {
     }
   }
 
-  private async answerTypeUsb(password: string): Promise<void> {
+  private async answerTypeUsb(steps: string[]): Promise<void> {
     try {
       const response = await fetch(`${USB_TYPER_URL}/type`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ steps }),
       });
       if (!response.ok) {
         const text = (await response.text()).replace(/\s+/g, " ").trim();
@@ -235,9 +235,14 @@ export class SerialVault {
   }
 
   private dispatch(line: string): void {
-    const password = typeUsbPassword(line);
-    if (password != null) {
-      void this.answerTypeUsb(password);
+    const typing = typeUsbSteps(line);
+    if (typing) {
+      if ("steps" in typing) void this.answerTypeUsb(typing.steps);
+      else {
+        void this.writeRaw(
+          JSON.stringify({ op: "type_ack", ok: false, error: typing.error }),
+        );
+      }
       return;
     }
     const message = parseDeviceMessage(line);
@@ -259,7 +264,7 @@ export class SerialVault {
   }
 }
 
-function typeUsbPassword(line: string): string | null {
+function typeUsbSteps(line: string): { steps: string[] } | { error: string } | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(line);
@@ -268,8 +273,17 @@ function typeUsbPassword(line: string): string | null {
   }
   if (!parsed || typeof parsed !== "object") return null;
   const record = parsed as Record<string, unknown>;
-  if (record.event !== "type_usb" || typeof record.password !== "string") return null;
-  return record.password;
+  if (record.event !== "type_usb") return null;
+  if (Array.isArray(record.steps) && record.steps.length > 0) {
+    if (record.steps.every((step) => typeof step === "string")) {
+      return { steps: record.steps };
+    }
+    return { error: "The device sent an unexpected type request." };
+  }
+  if (typeof record.password === "string" && record.password.length > 0) {
+    return { steps: [record.password] };
+  }
+  return { error: "The device sent an unexpected type request." };
 }
 
 async function typerIsUp(): Promise<boolean> {

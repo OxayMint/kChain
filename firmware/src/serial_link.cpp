@@ -16,6 +16,57 @@ void copyReq(const JsonDocument& in, JsonDocument& out) {
   if (in["req"].is<uint32_t>()) out["req"] = in["req"].as<uint32_t>();
 }
 
+void writeEntry(JsonObject object, const VaultEntry& entry) {
+  object["id"] = entry.id;
+  object["type"] = entryTypeName(entry.type);
+  object["name"] = entry.name;
+  if (entry.type == EntryType::Website) object["username"] = entry.username;
+  if (entry.type != EntryType::Crypto) object["password"] = entry.password;
+  if (entry.type == EntryType::Crypto) object["phrase"] = entry.phrase;
+}
+
+void addTypeSteps(JsonArray steps, const VaultEntry& entry) {
+  switch (entry.type) {
+    case EntryType::Website:
+      steps.add(entry.username);
+      steps.add("\t");
+      steps.add(entry.password);
+      break;
+    case EntryType::Crypto:
+      steps.add(entry.phrase);
+      break;
+    case EntryType::Generic:
+      steps.add(entry.password);
+      break;
+  }
+}
+
+bool textField(const JsonDocument& in, const char* key, const char*& out, const char*& error) {
+  if (in[key].isUnbound()) {
+    out = "";
+    return true;
+  }
+  if (!in[key].is<const char*>()) {
+    error = "A field was not text.";
+    return false;
+  }
+  out = in[key].as<const char*>();
+  return true;
+}
+
+// A missing type is generic, so an older name-and-password command still adds.
+bool commandType(const JsonDocument& in, EntryType& type, const char*& error) {
+  if (in["type"].isUnbound()) {
+    type = EntryType::Generic;
+    return true;
+  }
+  if (!in["type"].is<const char*>() || !entryTypeFrom(in["type"].as<const char*>(), type)) {
+    error = "Type must be generic, website, or crypto.";
+    return false;
+  }
+  return true;
+}
+
 }  // namespace
 
 void SerialLink::noteUsbReady() {
@@ -49,7 +100,8 @@ bool SerialLink::requestUsbType(const VaultEntry& entry, Vault& vault, const Key
   doc["event"] = "type_usb";
   doc["id"] = entry.id;
   doc["name"] = entry.name;
-  doc["password"] = entry.password;
+  doc["type"] = entryTypeName(entry.type);
+  addTypeSteps(doc["steps"].to<JsonArray>(), entry);
   writeJson(doc);
   Serial.flush();
 
@@ -119,13 +171,11 @@ void SerialLink::sendSnapshot(const char* op, bool ok, const char* error, const 
   JsonArray entries = doc["entries"].to<JsonArray>();
   for (int i = 0; i < vault.size(); i++) {
     const VaultEntry* entry = vault.at(i);
-    JsonObject object = entries.add<JsonObject>();
-    object["id"] = entry->id;
-    object["name"] = entry->name;
-    object["password"] = entry->password;
+    writeEntry(entries.add<JsonObject>(), *entry);
   }
   if (vault.selectedId() == 0) doc["selectedId"] = nullptr;
   else doc["selectedId"] = vault.selectedId();
+  doc["active"] = active_;
   doc["keyboardConnected"] = keyboard.connected();
   doc["usbTyping"] = usbReadyNow();
   writeJson(doc);
@@ -186,15 +236,19 @@ void SerialLink::handleLine(const char* line, Vault& vault, const KeyboardOut& k
 
   if (strcmp(op, "add") == 0) {
     const char* error = nullptr;
-    uint32_t id = 0;
-    const char* name = in["name"];
-    const char* password = in["password"];
-    if (!in["name"].is<const char*>() || !in["password"].is<const char*>()) {
-      sendSnapshot(op, false, "Add needs a name and a password.", vault, keyboard, req, hasReq, 0,
-                   false);
+    EntryType type = EntryType::Generic;
+    const char* name = "";
+    const char* username = "";
+    const char* password = "";
+    const char* phrase = "";
+    if (!commandType(in, type, error) || !textField(in, "name", name, error) ||
+        !textField(in, "username", username, error) || !textField(in, "password", password, error) ||
+        !textField(in, "phrase", phrase, error)) {
+      sendSnapshot(op, false, error, vault, keyboard, req, hasReq, 0, false);
       return;
     }
-    if (!vault.add(name, password, id, error)) {
+    uint32_t id = 0;
+    if (!vault.add(type, name, username, password, phrase, id, error)) {
       sendSnapshot(op, false, error, vault, keyboard, req, hasReq, 0, false);
       return;
     }
@@ -213,12 +267,18 @@ void SerialLink::handleLine(const char* line, Vault& vault, const KeyboardOut& k
     if (strcmp(op, "delete") == 0) {
       ok = vault.remove(id, error);
     } else {
-      if (!in["name"].is<const char*>() || !in["password"].is<const char*>()) {
-        sendSnapshot(op, false, "Edit needs a name and a password.", vault, keyboard, req, hasReq,
-                     0, false);
+      EntryType type = EntryType::Generic;
+      const char* name = "";
+      const char* username = "";
+      const char* password = "";
+      const char* phrase = "";
+      if (!commandType(in, type, error) || !textField(in, "name", name, error) ||
+          !textField(in, "username", username, error) ||
+          !textField(in, "password", password, error) || !textField(in, "phrase", phrase, error)) {
+        sendSnapshot(op, false, error, vault, keyboard, req, hasReq, 0, false);
         return;
       }
-      ok = vault.edit(id, in["name"], in["password"], error);
+      ok = vault.edit(id, type, name, username, password, phrase, error);
     }
     sendSnapshot(op, ok, error, vault, keyboard, req, hasReq, 0, false);
     return;
@@ -233,6 +293,7 @@ void SerialLink::emitReady(const Vault& vault, bool keyboardConnected) {
   doc["version"] = PROTOCOL_VERSION;
   doc["keyboardConnected"] = keyboardConnected;
   doc["usbTyping"] = usbReadyNow();
+  doc["active"] = active_;
   if (!vault.mutableOk()) doc["error"] = vault.loadError();
   else if (vault.selectedId() == 0) doc["selectedId"] = nullptr;
   else doc["selectedId"] = vault.selectedId();
@@ -250,6 +311,12 @@ void SerialLink::emitSelected(const Vault& vault) {
     doc["id"] = vault.selected()->id;
     doc["name"] = vault.selected()->name;
   }
+  writeJson(doc);
+}
+
+void SerialLink::emitIdle() {
+  JsonDocument doc;
+  doc["event"] = "idle";
   writeJson(doc);
 }
 

@@ -89,3 +89,12 @@ void KeyboardOut::typeText(const std::string& text) {
   // No Enter, Tab, or extra character is sent.
   bleKeyboard.releaseAll();
 }
+
+void KeyboardOut::typeTab() {
+  if (!connected()) return;
+  // KEY_TAB is the library's non-printing tab, not the ASCII tab byte.
+  bleKeyboard.press(KEY_TAB);
+  delay(KEY_STROKE_DELAY_MS);
+  bleKeyboard.release(KEY_TAB);
+  delay(KEY_STROKE_DELAY_MS);
+}

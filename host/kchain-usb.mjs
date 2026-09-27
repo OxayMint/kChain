@@ -109,42 +109,78 @@ async function ensureTyper() {
   await runProcess("swiftc", ["-O", "-o", swiftBinary, swiftSource], null);
 }
 
-async function typePassword(password) {
+async function typeSteps(steps) {
   if (process.platform === "darwin") {
     await ensureTyper();
-    await runProcess(swiftBinary, [], password);
+    await runProcess(swiftBinary, [], JSON.stringify(steps));
     return;
   }
   if (process.platform === "linux") {
-    await typeLinux(password);
+    await typeLinux(steps);
     return;
   }
   if (process.platform === "win32") {
-    await typeWindows(password);
+    await typeWindows(steps);
     return;
   }
   throw new Error("This operating system cannot type from the USB typer.");
 }
 
-function typeLinux(password) {
-  const command = process.env.WAYLAND_DISPLAY ? "wtype" : "xdotool";
-  const args =
-    command === "wtype" ? [password] : ["type", "--delay", "10", "--", password];
-  return runProcess(command, args, null);
+async function typeLinux(steps) {
+  const wayland = Boolean(process.env.WAYLAND_DISPLAY);
+  const command = wayland ? "wtype" : "xdotool";
+  for (const step of steps) {
+    if (step.length === 0) continue;
+    const args =
+      step === "\t"
+        ? wayland
+          ? ["-k", "tab"]
+          : ["key", "Tab"]
+        : wayland
+          ? [step]
+          : ["type", "--delay", "10", "--", step];
+    await runProcess(command, args, null);
+  }
 }
 
-function typeWindows(password) {
+function sendKeysSteps(steps) {
+  return steps
+    .map((step) => (step === "\t" ? "{TAB}" : step.replace(/([+^%~(){}\[\]])/g, "{$1}")))
+    .join("");
+}
+
+function typeWindows(steps) {
   const script = `
 $raw = [Console]::In.ReadToEnd()
-$escaped = $raw -replace '([+^%~(){}\\[\\]])', '{$1}'
 Add-Type -AssemblyName System.Windows.Forms
-[System.Windows.Forms.SendKeys]::SendWait($escaped)
+[System.Windows.Forms.SendKeys]::SendWait($raw)
 `;
   return runProcess(
     "powershell.exe",
     ["-NoProfile", "-NonInteractive", "-Command", script],
-    password,
+    sendKeysSteps(steps),
   );
+}
+
+function stepsFrom(parsed) {
+  if (parsed && Array.isArray(parsed.steps)) {
+    if (parsed.steps.length === 0 || parsed.steps.length > 8) {
+      return { error: "Missing text to type." };
+    }
+    const steps = [];
+    for (const step of parsed.steps) {
+      if (typeof step !== "string") return { error: "Missing text to type." };
+      if (step !== "\t" && step.length > 256) return { error: "Text is too long." };
+      steps.push(step);
+    }
+    if (steps.every((step) => step.length === 0)) return { error: "Missing text to type." };
+    return { steps };
+  }
+  if (parsed && typeof parsed.password === "string" && parsed.password.length > 0) {
+    if (parsed.password.length > 128) return { error: "Password is too long." };
+    return { steps: [parsed.password] };
+  }
+  return { error: "Missing password." };
 }
 
 async function onDeviceLine(line) {
@@ -157,11 +193,21 @@ async function onDeviceLine(line) {
     forward(trimmed);
     return;
   }
-  if (message && message.event === "type_usb" && typeof message.password === "string") {
+  if (message && message.event === "type_usb") {
     const name = typeof message.name === "string" ? message.name : "entry";
+    const typing = stepsFrom(message);
+    if (typing.error) {
+      log(typing.error);
+      try {
+        await writeLine(JSON.stringify({ op: "type_ack", ok: false, error: typing.error }));
+      } catch {
+        // The cable dropped while reporting the failure.
+      }
+      return;
+    }
     log(`Typing ${name}.`);
     try {
-      await typePassword(message.password);
+      await typeSteps(typing.steps);
       await writeLine(JSON.stringify({ op: "type_ack", ok: true }));
     } catch (error) {
       const text = error instanceof Error ? error.message : "Could not type.";
@@ -286,18 +332,14 @@ function startServer() {
         try {
           const body = (await readBody(req)).trim();
           const parsed = JSON.parse(body);
-          if (!parsed || typeof parsed.password !== "string" || parsed.password.length === 0) {
+          const typing = stepsFrom(parsed);
+          if (typing.error) {
             res.writeHead(400);
-            res.end("Missing password.");
+            res.end(typing.error);
             return;
           }
-          if (parsed.password.length > 128) {
-            res.writeHead(400);
-            res.end("Password is too long.");
-            return;
-          }
-          log("Typing a password from the editor.");
-          await typePassword(parsed.password);
+          log("Typing from the editor.");
+          await typeSteps(typing.steps);
           res.writeHead(204);
           res.end();
         } catch (error) {

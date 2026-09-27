@@ -21,7 +21,7 @@ const display = Instrument_Serif({
 export const metadata: Metadata = {
   title: "kChain",
   description:
-    "A password device. Turn the wheel to choose a password, then double-tap to type it.",
+    "Turn the wheel to choose an entry, then double-tap to type it.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

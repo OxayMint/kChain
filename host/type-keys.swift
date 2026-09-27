@@ -20,25 +20,48 @@ if !AXIsProcessTrustedWithOptions(prompt) {
 }
 
 let data = FileHandle.standardInput.readDataToEndOfFile()
-guard let text = String(data: data, encoding: .utf8), !text.isEmpty else {
+let steps: [String]
+if let json = try? JSONSerialization.jsonObject(with: data) as? [String], !json.isEmpty {
+  steps = json
+} else if let text = String(data: data, encoding: .utf8), !text.isEmpty {
+  steps = [text]
+} else {
   fputs("Nothing to type.\n", stderr)
   exit(1)
 }
 
 let source = CGEventSource(stateID: .hidSystemState)
-for character in text {
-  let units = Array(String(character).utf16)
-  guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
-        let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
-    fputs("Could not create a key event.\n", stderr)
-    exit(1)
-  }
-  units.withUnsafeBufferPointer { buffer in
-    if let base = buffer.baseAddress {
-      down.keyboardSetUnicodeString(stringLength: units.count, unicodeString: base)
+let tabKey: CGKeyCode = 0x30
+
+func fail(_ message: String) -> Never {
+  fputs(message, stderr)
+  exit(1)
+}
+
+for step in steps {
+  if step == "\t" {
+    guard let down = CGEvent(keyboardEventSource: source, virtualKey: tabKey, keyDown: true),
+          let up = CGEvent(keyboardEventSource: source, virtualKey: tabKey, keyDown: false) else {
+      fail("Could not create a key event.\n")
     }
+    down.post(tap: .cghidEventTap)
+    up.post(tap: .cghidEventTap)
+    usleep(10_000)
+    continue
   }
-  down.post(tap: .cghidEventTap)
-  up.post(tap: .cghidEventTap)
-  usleep(10_000)
+  for character in step {
+    let units = Array(String(character).utf16)
+    guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+          let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
+      fail("Could not create a key event.\n")
+    }
+    units.withUnsafeBufferPointer { buffer in
+      if let base = buffer.baseAddress {
+        down.keyboardSetUnicodeString(stringLength: units.count, unicodeString: base)
+      }
+    }
+    down.post(tap: .cghidEventTap)
+    up.post(tap: .cghidEventTap)
+    usleep(10_000)
+  }
 }
