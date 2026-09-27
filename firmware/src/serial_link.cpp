@@ -38,8 +38,7 @@ bool SerialLink::consumeUsbChange(bool& ready) {
   return true;
 }
 
-bool SerialLink::requestUsbType(const VaultEntry& entry, Vault& vault, const KeyboardOut& keyboard,
-                                const char*& error) {
+bool SerialLink::requestUsbType(const VaultEntry& entry, Vault& vault, const char*& error) {
   typeAckPending_ = true;
   typeAckGot_ = false;
   typeAckOk_ = false;
@@ -55,7 +54,7 @@ bool SerialLink::requestUsbType(const VaultEntry& entry, Vault& vault, const Key
 
   const unsigned long start = millis();
   while (millis() - start < USB_TYPE_ACK_MS) {
-    poll(vault, keyboard);
+    poll(vault);
     if (typeAckGot_) break;
     delay(LOOP_POLL_MS);
   }
@@ -72,7 +71,7 @@ bool SerialLink::requestUsbType(const VaultEntry& entry, Vault& vault, const Key
   return true;
 }
 
-void SerialLink::poll(Vault& vault, const KeyboardOut& keyboard) {
+void SerialLink::poll(Vault& vault) {
   while (Serial.available() > 0) {
     const int raw = Serial.read();
     if (raw < 0) break;
@@ -88,7 +87,7 @@ void SerialLink::poll(Vault& vault, const KeyboardOut& keyboard) {
       } else if (length_ > 0) {
         line_[length_] = '\0';
         length_ = 0;
-        handleLine(line_, vault, keyboard);
+        handleLine(line_, vault);
       }
       continue;
     }
@@ -103,8 +102,7 @@ void SerialLink::poll(Vault& vault, const KeyboardOut& keyboard) {
 }
 
 void SerialLink::sendSnapshot(const char* op, bool ok, const char* error, const Vault& vault,
-                              const KeyboardOut& keyboard, uint32_t req, bool hasReq,
-                              uint32_t createdId, bool hasCreatedId) {
+                              uint32_t req, bool hasReq, uint32_t createdId, bool hasCreatedId) {
   JsonDocument doc;
   doc["op"] = op;
   doc["ok"] = ok;
@@ -126,12 +124,14 @@ void SerialLink::sendSnapshot(const char* op, bool ok, const char* error, const 
   }
   if (vault.selectedId() == 0) doc["selectedId"] = nullptr;
   else doc["selectedId"] = vault.selectedId();
-  doc["keyboardConnected"] = keyboard.connected();
+  // This build has no Bluetooth keyboard. The field stays so older editors
+  // still parse the snapshot.
+  doc["keyboardConnected"] = false;
   doc["usbTyping"] = usbReadyNow();
   writeJson(doc);
 }
 
-void SerialLink::handleLine(const char* line, Vault& vault, const KeyboardOut& keyboard) {
+void SerialLink::handleLine(const char* line, Vault& vault) {
   JsonDocument in;
   if (deserializeJson(in, line)) {
     JsonDocument err;
@@ -177,10 +177,10 @@ void SerialLink::handleLine(const char* line, Vault& vault, const KeyboardOut& k
 
   if (strcmp(op, "list") == 0) {
     if (!vault.mutableOk()) {
-      sendSnapshot(op, false, vault.loadError(), vault, keyboard, req, hasReq, 0, false);
+      sendSnapshot(op, false, vault.loadError(), vault, req, hasReq, 0, false);
       return;
     }
-    sendSnapshot(op, true, nullptr, vault, keyboard, req, hasReq, 0, false);
+    sendSnapshot(op, true, nullptr, vault, req, hasReq, 0, false);
     return;
   }
 
@@ -190,21 +190,20 @@ void SerialLink::handleLine(const char* line, Vault& vault, const KeyboardOut& k
     const char* name = in["name"];
     const char* password = in["password"];
     if (!in["name"].is<const char*>() || !in["password"].is<const char*>()) {
-      sendSnapshot(op, false, "Add needs a name and a password.", vault, keyboard, req, hasReq, 0,
-                   false);
+      sendSnapshot(op, false, "Add needs a name and a password.", vault, req, hasReq, 0, false);
       return;
     }
     if (!vault.add(name, password, id, error)) {
-      sendSnapshot(op, false, error, vault, keyboard, req, hasReq, 0, false);
+      sendSnapshot(op, false, error, vault, req, hasReq, 0, false);
       return;
     }
-    sendSnapshot(op, true, nullptr, vault, keyboard, req, hasReq, id, true);
+    sendSnapshot(op, true, nullptr, vault, req, hasReq, id, true);
     return;
   }
 
   if (strcmp(op, "edit") == 0 || strcmp(op, "delete") == 0) {
     if (!in["id"].is<uint32_t>() || in["id"].as<uint32_t>() == 0) {
-      sendSnapshot(op, false, "Command needs an entry id.", vault, keyboard, req, hasReq, 0, false);
+      sendSnapshot(op, false, "Command needs an entry id.", vault, req, hasReq, 0, false);
       return;
     }
     const uint32_t id = in["id"].as<uint32_t>();
@@ -214,24 +213,23 @@ void SerialLink::handleLine(const char* line, Vault& vault, const KeyboardOut& k
       ok = vault.remove(id, error);
     } else {
       if (!in["name"].is<const char*>() || !in["password"].is<const char*>()) {
-        sendSnapshot(op, false, "Edit needs a name and a password.", vault, keyboard, req, hasReq,
-                     0, false);
+        sendSnapshot(op, false, "Edit needs a name and a password.", vault, req, hasReq, 0, false);
         return;
       }
       ok = vault.edit(id, in["name"], in["password"], error);
     }
-    sendSnapshot(op, ok, error, vault, keyboard, req, hasReq, 0, false);
+    sendSnapshot(op, ok, error, vault, req, hasReq, 0, false);
     return;
   }
 
-  sendSnapshot(op, false, "Unknown command.", vault, keyboard, req, hasReq, 0, false);
+  sendSnapshot(op, false, "Unknown command.", vault, req, hasReq, 0, false);
 }
 
-void SerialLink::emitReady(const Vault& vault, bool keyboardConnected) {
+void SerialLink::emitReady(const Vault& vault) {
   JsonDocument doc;
   doc["event"] = "ready";
   doc["version"] = PROTOCOL_VERSION;
-  doc["keyboardConnected"] = keyboardConnected;
+  doc["keyboardConnected"] = false;
   doc["usbTyping"] = usbReadyNow();
   if (!vault.mutableOk()) doc["error"] = vault.loadError();
   else if (vault.selectedId() == 0) doc["selectedId"] = nullptr;
@@ -265,13 +263,6 @@ void SerialLink::emitTypeFailed(const char* error) {
   JsonDocument doc;
   doc["event"] = "type_failed";
   doc["error"] = error == nullptr ? "Could not type." : error;
-  writeJson(doc);
-}
-
-void SerialLink::emitKeyboard(bool connected) {
-  JsonDocument doc;
-  doc["event"] = "keyboard";
-  doc["connected"] = connected;
   writeJson(doc);
 }
 

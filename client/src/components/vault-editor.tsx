@@ -61,6 +61,11 @@ export function VaultEditor() {
   const [editError, setEditError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<VaultEntry | null>(null);
   const sessionRef = useRef<VaultSession | null>(null);
+  const usbSeen = useRef<boolean | null>(null);
+  const connectRef = useRef<(mode: "agent" | "espressif" | "any") => Promise<void>>(
+    async () => {},
+  );
+  const autoStarted = useRef(false);
   const [typer, setTyper] = useState<UsbTyperStatus>("down");
   const browserSerial = useSyncExternalStore(
     () => () => {},
@@ -75,10 +80,17 @@ export function VaultEditor() {
   }, []);
 
   useEffect(() => {
-    if (status.phase !== "disconnected") return;
     let stop = false;
     async function probe() {
-      const next = await usbTyperStatus();
+      let next = await usbTyperStatus();
+      if (next === "down") {
+        try {
+          await fetch("/api/typer", { method: "POST" });
+        } catch {
+          // The next probe tries again.
+        }
+        next = await usbTyperStatus();
+      }
       if (!stop) setTyper(next);
     }
     void probe();
@@ -87,17 +99,49 @@ export function VaultEditor() {
       stop = true;
       clearInterval(timer);
     };
-  }, [status.phase]);
+  }, []);
+
+  useEffect(() => {
+    if (typer !== "ready" || status.phase !== "disconnected") return;
+    if (autoStarted.current) return;
+    autoStarted.current = true;
+    void connectRef.current("agent");
+  }, [typer, status.phase]);
+
+  useEffect(() => {
+    if (typer === "down" || status.phase !== "ready") return;
+    const session = sessionRef.current;
+    if (!session) return;
+    let stop = false;
+    async function refreshUsb() {
+      await delay(1500);
+      if (stop || sessionRef.current !== session) return;
+      try {
+        const response = await session.request({ op: "list" });
+        const next = snapshotFrom(response);
+        if (stop) return;
+        setStatus((current) => {
+          if (current.phase !== "ready") return current;
+          if (current.snapshot.usbTyping === next.usbTyping) return current;
+          return {
+            ...current,
+            snapshot: { ...current.snapshot, usbTyping: next.usbTyping },
+          };
+        });
+      } catch {
+        // A later heartbeat or the next probe updates the same flag.
+      }
+    }
+    void refreshUsb();
+    return () => {
+      stop = true;
+    };
+  }, [typer, status.phase]);
 
   function applyEvent(event: DeviceEvent) {
+    if (event.event === "usb") usbSeen.current = event.ready;
     setStatus((current) => {
       if (current.phase !== "ready") return current;
-      if (event.event === "keyboard") {
-        return {
-          ...current,
-          snapshot: { ...current.snapshot, keyboardConnected: event.connected },
-        };
-      }
       if (event.event === "usb") {
         return {
           ...current,
@@ -141,6 +185,7 @@ export function VaultEditor() {
 
   async function connect(mode: "agent" | "espressif" | "any") {
     setFormError(null);
+    usbSeen.current = null;
     setStatus({ phase: "connecting", via: mode === "agent" ? "agent" : "serial" });
     const onDisconnect = (message: string) => {
       sessionRef.current = null;
@@ -156,6 +201,7 @@ export function VaultEditor() {
       else await (session as SerialVault).connect(mode === "any");
       setStatus({ phase: "loading" });
       const snapshot = await readVault(session);
+      if (usbSeen.current != null) snapshot.usbTyping = usbSeen.current;
       sessionRef.current = session;
       setStatus({ phase: "ready", snapshot, notice: null });
     } catch (error) {
@@ -167,6 +213,8 @@ export function VaultEditor() {
       setStatus({ phase: "error", message: messageOf(error) });
     }
   }
+
+  connectRef.current = connect;
 
   async function mutate(
     kind: Exclude<Busy, null>,
@@ -275,7 +323,7 @@ export function VaultEditor() {
               double-tap to type it. Use this page to add and change passwords.
             </p>
           </div>
-          <KeyboardStatus snapshot={snapshot} />
+          <KeyboardStatus snapshot={snapshot} typer={typer} />
         </header>
 
         <div className="mt-8 flex flex-1 flex-col gap-6" aria-live="polite">
@@ -292,7 +340,11 @@ export function VaultEditor() {
             <section className="rounded-xl border border-border bg-card p-5 sm:p-6">
               <h2 className="font-display text-3xl">Connect</h2>
               <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
-                Plug in the device, then connect.
+                {typer === "waiting"
+                  ? "Plug in the device. This page connects when it shows up."
+                  : typer === "down"
+                    ? "Starting USB typing…"
+                    : "Connecting to the device…"}
               </p>
               <div className="mt-5 flex flex-col gap-2 sm:flex-row">
                 {typer === "ready" && (
@@ -300,13 +352,13 @@ export function VaultEditor() {
                     Connect
                   </Button>
                 )}
-                {browserSerial && (
+                {browserSerial && typer !== "down" && (
                   <Button
                     type="button"
-                    variant={typer === "ready" ? "outline" : "default"}
+                    variant="outline"
                     onClick={() => void connect("espressif")}
                   >
-                    {typer === "ready" ? "Choose a port" : "Connect"}
+                    Choose a port
                   </Button>
                 )}
                 {browserSerial && (
@@ -359,7 +411,10 @@ export function VaultEditor() {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => setStatus({ phase: "disconnected" })}
+                  onClick={() => {
+                    autoStarted.current = false;
+                    setStatus({ phase: "disconnected" });
+                  }}
                 >
                   Back
                 </Button>
@@ -372,6 +427,14 @@ export function VaultEditor() {
               {status.phase === "ready" && status.notice && (
                 <Alert>
                   <AlertDescription>{status.notice}</AlertDescription>
+                </Alert>
+              )}
+              {status.phase === "ready" && !snapshot.usbTyping && typer === "down" && (
+                <Alert>
+                  <AlertTitle>USB typing is not ready</AlertTitle>
+                  <AlertDescription>
+                    Reload this page. It starts USB typing on this computer.
+                  </AlertDescription>
                 </Alert>
               )}
 
@@ -642,27 +705,35 @@ export function VaultEditor() {
   );
 }
 
-function KeyboardStatus({ snapshot }: { snapshot: VaultSnapshot | null }) {
+function KeyboardStatus({
+  snapshot,
+  typer,
+}: {
+  snapshot: VaultSnapshot | null;
+  typer: UsbTyperStatus;
+}) {
   if (!snapshot) {
     return (
       <p className="text-sm text-muted-foreground sm:text-right">Not connected</p>
     );
   }
+  const typing = snapshot.usbTyping;
+  const label = typing
+    ? "Types on this computer"
+    : typer === "down"
+      ? "USB typer is not running"
+      : "Waiting for the USB typer";
   return (
     <p className="text-sm sm:max-w-56 sm:text-right">
       <span
         className={
-          snapshot.usbTyping || snapshot.keyboardConnected
+          typing
             ? "mr-2 inline-block size-2 rounded-full bg-primary"
             : "mr-2 inline-block size-2 rounded-full bg-muted-foreground"
         }
         aria-hidden
       />
-      {snapshot.usbTyping
-        ? "Types on this computer"
-        : snapshot.keyboardConnected
-          ? "Types over Bluetooth"
-          : "Not paired"}
+      {label}
     </p>
   );
 }

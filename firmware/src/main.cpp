@@ -3,7 +3,6 @@
 #include "button_input.h"
 #include "config.h"
 #include "encoder_input.h"
-#include "keyboard_out.h"
 #include "serial_link.h"
 #include "status_led.h"
 #include "vault.h"
@@ -12,9 +11,13 @@ ButtonInput buttonInput;
 EncoderInput encoderInput;
 Input& input = buttonInput;
 Vault vault;
-KeyboardOut keyboard;
 SerialLink serialLink;
 StatusLed led;
+
+// The C3 HAL keeps the Bluetooth controller unless this returns false.
+// initArduino then releases that memory before setup, so the radio cannot start.
+// This program never starts Wi-Fi either.
+extern "C" bool btInUse() { return false; }
 
 enum class Activity : uint8_t { Idle, Active };
 
@@ -24,21 +27,18 @@ bool wakeGesture = false;
 unsigned long lastActivityMs = 0;
 
 void setup() {
-  // Drop the clock before the radio starts. USB on this chip uses its own
-  // clock, so the serial port stays up.
+  // USB on this chip uses its own clock, so the serial port stays up.
   setCpuFrequencyMhz(CPU_MHZ);
 
-  // Native USB CDC. Do not wait for a host: the keyboard must work
-  // with the cable unplugged. GPIO 20 and 21 are not used.
+  // Native USB CDC. GPIO 20 and 21 are not used. The radio stays down:
+  // Bluetooth memory was released at boot, and Wi-Fi is never started.
   Serial.begin(SERIAL_BAUD);
 
   input.begin();
   led.begin();
   vault.begin();
-  keyboard.begin();
-  // After Bluetooth. Starting the radio clears GPIO interrupts attached earlier.
   encoderInput.begin();
-  serialLink.emitReady(vault, keyboard.connected());
+  serialLink.emitReady(vault);
 }
 
 void goIdle() {
@@ -55,23 +55,15 @@ bool typeSelected() {
   }
   // Copy before the USB wait. A command handled while waiting can edit the vault.
   const VaultEntry entry = *current;
-  // The USB typer is the computer this cable is plugged into. It wins while
-  // it has the port open, including when a Bluetooth host is also paired.
-  if (serialLink.usbTypingReady()) {
-    const char* error = nullptr;
-    if (!serialLink.requestUsbType(entry, vault, keyboard, error)) {
-      serialLink.emitTypeFailed(error);
-      return false;
-    }
-    serialLink.emitTyped(entry);
-    return true;
-  }
-  if (!keyboard.connected()) {
-    serialLink.emitTypeFailed(
-        "Bluetooth is not connected, and the USB typer is not running.");
+  if (!serialLink.usbTypingReady()) {
+    serialLink.emitTypeFailed("The USB typer is not running.");
     return false;
   }
-  keyboard.typeText(entry.password);
+  const char* error = nullptr;
+  if (!serialLink.requestUsbType(entry, vault, error)) {
+    serialLink.emitTypeFailed(error);
+    return false;
+  }
   serialLink.emitTyped(entry);
   return true;
 }
@@ -96,7 +88,7 @@ void stepSelection(int delta) {
 }
 
 void loop() {
-  serialLink.poll(vault, keyboard);
+  serialLink.poll(vault);
 
   // Tap, double tap, and hold. A press wakes immediately, before the
   // gesture is classified, so the LED does not wait out the double-tap window.
@@ -146,9 +138,6 @@ void loop() {
     led.showIdle();
   }
   led.poll();
-
-  bool connected = false;
-  if (keyboard.consumeConnectionChange(connected)) serialLink.emitKeyboard(connected);
 
   bool usbReady = false;
   if (serialLink.consumeUsbChange(usbReady)) serialLink.emitUsb(usbReady);

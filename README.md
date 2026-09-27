@@ -1,6 +1,6 @@
 # kChain
 
-kChain is a password vault that lives on an ESP32-C3 Super Mini. It pairs over Bluetooth as a keyboard named **kChain**. A roller encoder picks an entry, and a double tap types that password into whatever field is focused on the computer or phone. The same double tap types over the USB cable when the USB typer is running, which is how a computer without Bluetooth gets the password. A browser page edits the vault over USB while the board is plugged in.
+kChain is a password vault that lives on an ESP32-C3 Super Mini. This experimental build keeps the radio off. The firmware releases the Bluetooth controller at boot and never starts Wi-Fi. A roller encoder picks an entry, and a double tap types that password through the USB cable into whatever field is focused on the computer. A browser page edits the vault over the same USB port while the board is plugged in.
 
 Passwords are stored in the clear on device flash. There is no encryption and no unlock PIN.
 
@@ -38,9 +38,9 @@ pio device monitor
 
 If upload never starts, hold BOOT (GPIO 9), tap RST, release BOOT, and run the upload again. The serial monitor does not assert DTR/RTS, so opening it should not reset the chip.
 
-An empty vault is valid. On first boot the firmware creates one. The board starts idle: the LED stays off, and a press does nothing until there is an entry. Bluetooth and USB keep running in idle.
+An empty vault is valid. On first boot the firmware creates one. The board starts idle: the LED stays off, and a press does nothing until there is an entry. USB serial keeps running in idle. The radio does not.
 
-A tap wakes the board onto password 1. The LED then repeats: flash that password’s number, wait one second. Flashes are grouped by three. Two is two short blinks. Four is three blinks, 200 ms, then one more. Wheel up and wheel down step through the first five passwords and wrap. A turn also wakes the board onto the entry it lands on. The button and the wheel only reach those entries. A double tap types the selected password, then the board returns to idle. With the USB typer running, that type goes to the computer on the cable. Otherwise it goes to the paired Bluetooth host. It also returns to idle after 5 seconds with the button released and the wheel still. Typing sends the password characters only, then releases every key. It does not press Enter. The tap or double tap that wakes the board leaves the password untyped; a later double tap types it. A hold is reserved for the menu.
+A tap wakes the board onto password 1. The LED then repeats: flash that password’s number, wait one second. Flashes are grouped by three. Two is two short blinks. Four is three blinks, 200 ms, then one more. Wheel up and wheel down step through the first five passwords and wrap. A turn also wakes the board onto the entry it lands on. The button and the wheel only reach those entries. A double tap types the selected password through the USB typer, then the board returns to idle. If the USB typer is not running, the double tap does not type. It also returns to idle after 5 seconds with the button released and the wheel still. Typing sends the password characters only, then releases every key. It does not press Enter. The tap or double tap that wakes the board leaves the password untyped; a later double tap types it. A hold is reserved for the menu.
 
 ## Client
 
@@ -52,21 +52,15 @@ npm install
 npm run dev
 ```
 
-Then open [http://localhost:4317](http://localhost:4317). Connect the board, choose the Espressif serial port (vendor ID `303A`), and list, add, edit, or delete entries. If the picker is empty, use “Show every serial port”.
+Then open [http://localhost:4317](http://localhost:4317). Plug in the board and the page connects. The first time, install the typer’s dependencies too: `cd host && npm install`. The page starts that program when you open it.
 
 ## USB typing
 
-The ESP32-C3 USB port is a serial port. It cannot appear as a USB keyboard. The USB typer runs on the computer and types the selected password into the focused field on a double tap.
+The ESP32-C3 USB port is a serial port. It cannot appear as a USB keyboard. Opening this page starts a typer on the computer, and a double tap types the selected password into the focused field.
 
-The editor can keep the serial port and ask the typer to type. The typer can also hold the port, and the editor connects through it. Those two cannot hold the port at the same time. While either path is live, a double tap types on this computer, including when a Bluetooth host is also paired. Quit the typer and Bluetooth types again.
+Plug in the board and open the page. It connects when the board shows up. The first password typed on macOS needs Accessibility permission for `kchain-type` (System Settings → Privacy & Security → Accessibility).
 
-```bash
-cd host
-npm install
-npm start
-```
-
-The first password typed on macOS needs Accessibility permission for `kchain-type` (System Settings → Privacy & Security → Accessibility). Set `KCHAIN_PORT` if the Espressif port is not the one that should open.
+The page and the typer share one serial port. While either has it, a double tap types on this computer.
 
 ## Serial protocol
 
@@ -79,8 +73,8 @@ USB serial is 115200 baud, one JSON object per line. The client sends `req` and 
 {"op":"delete","req":4,"id":1}
 ```
 
-A successful reply includes the full vault. `selectedId` is JSON `null` when the vault is empty. `keyboardConnected` is whether a Bluetooth host is paired. `usbTyping` is whether a USB heartbeat arrived in the last few seconds. A double tap types through USB when `usbTyping` is true, and through Bluetooth otherwise.
+A successful reply includes the full vault. `selectedId` is JSON `null` when the vault is empty. `keyboardConnected` stays false, because this build has no Bluetooth keyboard. `usbTyping` is whether a USB heartbeat arrived in the last few seconds. A double tap types through USB only when `usbTyping` is true.
 
-The device also emits events the client does not have to answer: `ready`, `selected`, `typed`, `type_failed`, `keyboard`, and `usb`.
+The device also emits events the client does not have to answer: `ready`, `selected`, `typed`, `type_failed`, and `usb`.
 
 The editor, or the USB typer when it holds the port, sends `{"op":"usb_ready"}` about once a second. A double tap then sends `type_usb` with the password. The computer answers `{"op":"type_ack","ok":true}` or `{"op":"type_ack","ok":false,"error":"..."}`.

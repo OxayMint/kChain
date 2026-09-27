@@ -51,7 +51,7 @@ static constexpr unsigned long ACTIVE_IDLE_MS = 5000;
 // core out of idle, and that is most of the heat while the board is on the
 // 5V from USB-C. This is shorter than the button debounce and the LED flashes.
 static constexpr unsigned long LOOP_POLL_MS = 10;
-// 160 MHz is the Arduino default. Button, LED, USB, and BLE HID do not need it.
+// 160 MHz is the Arduino default. Button, LED, and USB do not need it.
 static constexpr uint32_t CPU_MHZ = 80;
 
 // One count is a burst of short flashes, split into groups of three.
@@ -66,12 +66,6 @@ static constexpr unsigned long LED_GROUP_GAP_MS = 200;
 static constexpr unsigned long LED_CYCLE_PAUSE_MS = 1000;
 static constexpr int LED_GROUP_SIZE = 3;
 
-static constexpr char BLE_DEVICE_NAME[] = "kChain";
-static constexpr char BLE_MANUFACTURER[] = "kChain";
-// Gap after a key-down report and again after key-up. The BLE stack keeps
-// one pending notification, so a faster release replaces the key-down and
-// the host sees no character. This also has to cover a connection interval.
-static constexpr uint32_t KEY_STROKE_DELAY_MS = 30;
 // Typing waits this long for the USB typer to finish the password.
 // 128 characters at the host's per-key delay fits inside it.
 static constexpr unsigned long USB_TYPE_ACK_MS = 5000;

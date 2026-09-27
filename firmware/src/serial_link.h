@@ -1,6 +1,5 @@
 #pragma once
 
-#include "keyboard_out.h"
 #include "vault.h"
 
 // USB serial (native CDC) line protocol. One JSON object per line.
@@ -8,23 +7,22 @@
 // Events are unsolicited and have no "ok".
 //
 // The ESP32-C3 USB port is serial, not a keyboard. When the USB typer has the
-// port open it sends usb_ready, and a double tap asks it to type.
+// port open it sends usb_ready, and a double tap asks it to type. This build
+// has no Bluetooth keyboard.
 class SerialLink {
  public:
-  void poll(Vault& vault, const KeyboardOut& keyboard);
+  void poll(Vault& vault);
 
   bool usbTypingReady() const;
   // True once, when the USB typer becomes ready or goes quiet.
   bool consumeUsbChange(bool& ready);
   // Sends type_usb and waits for type_ack. error is set when this returns false.
-  bool requestUsbType(const VaultEntry& entry, Vault& vault, const KeyboardOut& keyboard,
-                      const char*& error);
+  bool requestUsbType(const VaultEntry& entry, Vault& vault, const char*& error);
 
-  void emitReady(const Vault& vault, bool keyboardConnected);
+  void emitReady(const Vault& vault);
   void emitSelected(const Vault& vault);
   void emitTyped(const VaultEntry& entry);
   void emitTypeFailed(const char* error);
-  void emitKeyboard(bool connected);
   void emitUsb(bool ready);
 
  private:
@@ -41,8 +39,7 @@ class SerialLink {
 
   void noteUsbReady();
   bool usbReadyNow() const;
-  void handleLine(const char* line, Vault& vault, const KeyboardOut& keyboard);
-  void sendSnapshot(const char* op, bool ok, const char* error, const Vault& vault,
-                    const KeyboardOut& keyboard, uint32_t req, bool hasReq, uint32_t createdId,
-                    bool hasCreatedId);
+  void handleLine(const char* line, Vault& vault);
+  void sendSnapshot(const char* op, bool ok, const char* error, const Vault& vault, uint32_t req,
+                    bool hasReq, uint32_t createdId, bool hasCreatedId);
 };

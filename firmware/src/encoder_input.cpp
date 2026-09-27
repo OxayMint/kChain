@@ -30,7 +30,9 @@ void IRAM_ATTR EncoderInput::onEdge() {
   const bool a = next & 1u;
   const bool b = next & 2u;
   const bool phase = (changed & 1u) ? (a == b) : (a != b);
-  const int8_t step = phase ? 1 : -1;
+  // This wheel's A/B phasing reads backwards, so the sign is flipped.
+  // Positive stays wheel up.
+  const int8_t step = phase ? -1 : 1;
 
   const unsigned long now = millis();
   if (quarter_ != 0 && now - quarterMs_ > ENCODER_PARTIAL_MS) quarter_ = 0;
@@ -50,7 +52,6 @@ void EncoderInput::begin() {
   quarter_ = 0;
   pending_ = 0;
   quarterMs_ = millis();
-  // After Bluetooth. Starting the radio clears GPIO interrupts attached earlier.
   attachInterrupt(digitalPinToInterrupt(PIN_ENCODER_A), onEdge, CHANGE);
   attachInterrupt(digitalPinToInterrupt(PIN_ENCODER_B), onEdge, CHANGE);
 }
