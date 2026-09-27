@@ -1,0 +1,199 @@
+:root {
+  color-scheme: dark;
+  --bg: #241f1a;
+  --fg: #f6f1e6;
+  --card: #312b24;
+  --muted: #c9bfae;
+  --line: rgba(246, 241, 230, 0.14);
+  --gold: #e4b54a;
+  --ink: #2a241c;
+  --danger: #f0a090;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-width: 280px;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+html.popup,
+html.popup body {
+  width: 360px;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.bar {
+  height: 4px;
+  background: var(--gold);
+}
+
+.app {
+  padding: 16px;
+}
+
+h1 {
+  margin: 0;
+  font-family: Palatino, "Iowan Old Style", Georgia, serif;
+  font-size: 32px;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+}
+
+h2 {
+  margin: 0;
+  font-family: Palatino, "Iowan Old Style", Georgia, serif;
+  font-size: 22px;
+  font-weight: 400;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.card {
+  border: 1px solid var(--line);
+  background: var(--card);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.badge {
+  display: inline-block;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.secret {
+  margin: 6px 0 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.button,
+.quiet {
+  border-radius: 8px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+}
+
+.button {
+  background: var(--gold);
+  color: var(--ink);
+}
+
+.quiet {
+  background: transparent;
+  border-color: var(--line);
+}
+
+.button:disabled,
+.quiet:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.login {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.login:hover {
+  background: rgba(228, 181, 74, 0.14);
+}
+
+.login strong {
+  display: block;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+input {
+  border: 1px solid var(--line);
+  background: #241f1a;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.switch button[aria-pressed="true"] {
+  background: var(--gold);
+  color: var(--ink);
+  border-color: transparent;
+}
+
+.error {
+  color: var(--danger);
+  font-size: 13px;
+  margin: 0;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  display: inline-block;
+  margin-right: 6px;
+  background: var(--muted);
+}
+
+.dot.on {
+  background: var(--gold);
+}

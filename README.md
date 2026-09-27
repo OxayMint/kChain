@@ -62,6 +62,30 @@ Plug in the board and open the page. It connects when the board shows up. The fi
 
 The page and the typer share one serial port. While either has it, a double tap types on this computer.
 
+## Chrome extension
+
+The extension fills website logins from the device and saves new ones when a login form is submitted. It talks to the USB typer on this computer. It does not keep a copy of the vault. Autofill works while the board is connected through the typer. Double-tap typing is unchanged.
+
+```bash
+cd extension
+npm install
+npm run build
+```
+
+In Chrome, open `chrome://extensions`, turn on Developer mode, and choose Load unpacked. Select `extension/dist`.
+
+On macOS, install the native host once so the extension can start the typer:
+
+```bash
+extension/native/install-mac.sh
+```
+
+Run that from a terminal where `node` is the Node you use for this repo. If the native host is not installed, start the typer yourself with `cd host && npm start`, or open the web editor, which starts it.
+
+A key icon appears on a username, email, or password field. Click it to fill a matching website entry, or to generate a password. Submitting a login offers to save a new website entry, or to update one when the password changed. The toolbar popup lists logins for the current site. Open vault shows the same add, edit, and delete actions as the web editor, including generic and crypto entries.
+
+The extension id is fixed by the key in `extension/manifest.json`, and the typer only accepts that extension origin.
+
 ## Serial protocol
 
 USB serial is 115200 baud, one JSON object per line. The client sends `req` and the device echoes it.

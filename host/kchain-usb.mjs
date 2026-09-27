@@ -10,12 +10,17 @@ const root = dirname(fileURLToPath(import.meta.url));
 const swiftSource = join(root, "type-keys.swift");
 const swiftBinary = join(root, "kchain-type");
 const portNumber = 4318;
+// Public key in extension/manifest.json. Unpacked installs keep this id.
+const extensionOrigin = "chrome-extension://akhgabpnnjnkhgpckaokepjcgdhiablm";
 
 let deviceOpen = false;
 let stopping = false;
 let writeChain = Promise.resolve();
+let commandChain = Promise.resolve();
+let nextCommandReq = 1000000;
 let activePort = null;
 const subscribers = new Set();
+const commandWaiters = new Map();
 
 function log(message) {
   console.log(message);
@@ -23,6 +28,7 @@ function log(message) {
 
 function originAllowed(origin) {
   if (!origin) return true;
+  if (origin === extensionOrigin) return true;
   let url;
   try {
     url = new URL(origin);
@@ -220,7 +226,83 @@ async function onDeviceLine(line) {
     }
     return;
   }
+  if (message && typeof message.ok === "boolean" && typeof message.req === "number") {
+    settleCommand(message.req, message);
+  }
   forward(trimmed);
+}
+
+function settleCommand(req, message) {
+  const waiter = commandWaiters.get(req);
+  if (!waiter) return;
+  clearTimeout(waiter.timer);
+  commandWaiters.delete(req);
+  waiter.resolve(message);
+}
+
+function failCommands(message) {
+  for (const waiter of commandWaiters.values()) {
+    clearTimeout(waiter.timer);
+    const error = new Error(message);
+    error.status = 503;
+    waiter.reject(error);
+  }
+  commandWaiters.clear();
+}
+
+function enqueueCommand(command) {
+  const run = commandChain.then(() => sendCommand(command));
+  commandChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+function sendCommand(command) {
+  if (!deviceOpen || !activePort) {
+    const error = new Error("The board is not open.");
+    error.status = 503;
+    return Promise.reject(error);
+  }
+  const req = nextCommandReq++;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      if (!commandWaiters.has(req)) return;
+      commandWaiters.delete(req);
+      const error = new Error("The device did not answer.");
+      error.status = 504;
+      reject(error);
+    }, 3000);
+    commandWaiters.set(req, { resolve, reject, timer });
+    writeLine(JSON.stringify({ ...command, req })).catch((error) => {
+      if (!commandWaiters.has(req)) return;
+      clearTimeout(timer);
+      commandWaiters.delete(req);
+      const wrapped = error instanceof Error ? error : new Error("Could not write to the board.");
+      wrapped.status = 500;
+      reject(wrapped);
+    });
+  });
+}
+
+function commandFrom(body) {
+  let parsed;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return { error: "Missing command." };
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { error: "Missing command." };
+  }
+  const op = parsed.op;
+  if (op !== "list" && op !== "add" && op !== "edit" && op !== "delete") {
+    return { error: "Unknown command." };
+  }
+  const command = { ...parsed };
+  delete command.req;
+  return { command };
 }
 
 function portIsBusy(text) {
@@ -289,6 +371,7 @@ async function session(path) {
   clearInterval(heartbeat);
   deviceOpen = false;
   activePort = null;
+  failCommands("The board is not open.");
   log("Serial port closed. Waiting for the board.");
 }
 
@@ -362,6 +445,33 @@ function startServer() {
       res.write("\n");
       subscribers.add(res);
       req.on("close", () => subscribers.delete(res));
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/command") {
+      void (async () => {
+        try {
+          const body = (await readBody(req)).trim();
+          const parsed = commandFrom(body);
+          if (parsed.error) {
+            res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+            res.end(parsed.error);
+            return;
+          }
+          const reply = await enqueueCommand(parsed.command);
+          if (res.headersSent) return;
+          res.writeHead(200, {
+            "Content-Type": "application/json",
+            "Cache-Control": "no-store",
+          });
+          res.end(JSON.stringify(reply));
+        } catch (error) {
+          if (res.headersSent) return;
+          const status = error && typeof error.status === "number" ? error.status : 500;
+          const text = error instanceof Error ? error.message : "Could not write to the board.";
+          res.writeHead(status, { "Content-Type": "text/plain; charset=utf-8" });
+          res.end(text);
+        }
+      })();
       return;
     }
     if (req.method === "POST" && url.pathname === "/line") {

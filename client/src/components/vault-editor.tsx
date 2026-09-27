@@ -74,12 +74,12 @@ export function VaultEditor() {
   const sessionRef = useRef<VaultSession | null>(null);
   const usbSeen = useRef<boolean | null>(null);
   const connectRef = useRef<(mode: "agent" | "espressif" | "any") => Promise<void>>(
-    async () => {},
+    async () => { },
   );
   const autoStarted = useRef(false);
   const [typer, setTyper] = useState<UsbTyperStatus>("down");
   const browserSerial = useSyncExternalStore(
-    () => () => {},
+    () => () => { },
     serialSupported,
     () => true,
   );

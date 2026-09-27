@@ -13,3 +13,7 @@ client/*.tsbuildinfo
 .DS_Store
 *.log
 /agent-tools/
+
+# Chrome extension
+extension/node_modules/
+extension/dist/

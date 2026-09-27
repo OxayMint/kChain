@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "kChain",
+  "version": "0.1.0",
+  "minimum_chrome_version": "116",
+  "description": "Fill and save passwords from the kChain device.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyeLp3ALnvvMPEXBcCsQJr39N1WWShTB245oP/1SXSwQMWzQCyrvNPxooSDSHxKCbYNxhYkNoy5cB5w5XNRXFSjneQ36DulCXr6jn24Aq/Wh/LtcE0GRLzx464JV5p6fKeAZQfvmB1jytge/ERRPrhPFL0hHjeN1at50E4lIJacspve3FxUM9SblfNXzFdNedTRzo2Tn3DAfyq0T/Q5pL3cde9D47ukvewfZGGiUUylB1wwbWdmf1wVo7J/sBopBLter9n3h4npUOYIlF6s8cizaZ/5unVkM+XfWf/sE54XbNzygE+5tIp+ehgpfrqSgNPh5SmOoNzWC2hEr9vXZtrQIDAQAB",
+  "action": {
+    "default_title": "kChain",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png"
+    }
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": ["sidePanel", "storage", "tabs", "nativeMessaging"],
+  "host_permissions": ["http://127.0.0.1:4318/*", "http://*/*", "https://*/*"],
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  }
+}
