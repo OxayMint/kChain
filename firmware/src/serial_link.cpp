@@ -225,6 +225,24 @@ void SerialLink::handleLine(const char* line, Vault& vault) {
     return;
   }
 
+  if (strcmp(op, "focus") == 0) {
+    uint32_t id = 0;
+    if (!in["id"].isUnbound() && !in["id"].isNull()) {
+      if (!in["id"].is<uint32_t>() || in["id"].as<uint32_t>() == 0) {
+        sendSnapshot(op, false, "Command needs an entry id.", vault, req, hasReq, 0, false);
+        return;
+      }
+      id = in["id"].as<uint32_t>();
+    }
+    const char* error = nullptr;
+    if (!vault.setFocus(id, error)) {
+      sendSnapshot(op, false, error, vault, req, hasReq, 0, false);
+      return;
+    }
+    sendSnapshot(op, true, nullptr, vault, req, hasReq, 0, false);
+    return;
+  }
+
   if (strcmp(op, "list") == 0) {
     if (!vault.mutableOk()) {
       sendSnapshot(op, false, vault.loadError(), vault, req, hasReq, 0, false);

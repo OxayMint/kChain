@@ -71,8 +71,9 @@ void applySelection(int slot) {
   serialLink.emitSelected(vault);
 }
 
-// One detent per step. Wheel up moves toward higher slots and wraps.
-// Wheel down moves the other way and wraps. A turn also wakes the board.
+// One detent per step. Wheel up moves toward later entries and wraps
+// through the whole vault. Wheel down moves the other way and wraps.
+// A turn also wakes the board.
 void stepSelection(int delta) {
   const int count = vault.selectableCount();
   if (count <= 0 || delta == 0) return;
@@ -94,7 +95,7 @@ void loop() {
   const InputEvent event = buttonInput.poll();
   if (buttonInput.consumePress()) {
     if (activity == Activity::Idle) {
-      if (vault.selectSlot(0)) {
+      if (vault.selectSlot(vault.wakeSlot())) {
         activity = Activity::Active;
         wakeGesture = true;
         serialLink.setActive(true);

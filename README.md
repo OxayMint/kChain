@@ -8,7 +8,7 @@ Entries are stored in the clear on device flash. There is no encryption and no u
 
 The button is active-low. Wire the switch between GPIO 5 and GND. The firmware enables the internal pull-up. Change `PIN_BUTTON` in `firmware/include/config.h` and rebuild. The file rejects pins this board cannot use.
 
-The mouse-wheel encoder navigates (the H-13 mark is the 13 mm body). Wire its common pin to GND, A to GPIO 6, and B to GPIO 7. The common pin is the middle one. Each detent steps one entry. Wheel up moves to the next entry and wheel down moves to the previous one, and both wrap inside the first five entries. Swap A and B if those directions feel backwards.
+The mouse-wheel encoder navigates (the H-13 mark is the 13 mm body). Wire its common pin to GND, A to GPIO 6, and B to GPIO 7. The common pin is the middle one. Each detent steps one entry. Wheel up moves to the next entry and wheel down moves to the previous one, and both wrap through every entry. Swap A and B if those directions feel backwards.
 
 The blue onboard LED is GPIO 8, active-low. The firmware leaves it undriven. The editor shows whether the board is idle or which entry is selected. A later screen module is the device UI.
 
@@ -40,7 +40,7 @@ If upload never starts, hold BOOT (GPIO 9), tap RST, release BOOT, and run the u
 
 An empty vault is valid. On first boot the firmware creates one. The board starts idle, and a press does nothing until there is an entry. USB serial keeps running in idle. The radio does not. While the editor is connected it shows “Device is idle”.
 
-A tap wakes the board onto entry 1. Wheel up and wheel down step through the first five entries and wrap. A turn also wakes the board onto the entry it lands on. The button and the wheel only reach those entries. The editor then shows that entry, for example “On the device: 2. github.com”. A double tap types the selected entry through the USB typer, then the board returns to idle. If the USB typer is not running, the double tap does not type. A generic entry types its password. A website entry types the username, a Tab key, then the password. The hostname is not typed. A crypto entry types its words, spaces included. It also returns to idle after 5 seconds with the button released and the wheel still. Typing releases every key when it finishes. It does not press Enter. The tap or double tap that wakes the board leaves the entry untyped; a later double tap types it. A hold is reserved for the menu.
+A tap wakes the board onto entry 1, or onto the login the extension has marked for the current page. Wheel up and wheel down step through every entry and wrap. A turn also wakes the board onto the entry it lands on. The editor then shows that entry, for example “On the device: 2. github.com”. A double tap types the selected entry through the USB typer, then the board returns to idle. If the USB typer is not running, the double tap does not type. A generic entry types its password. A website entry types the username, a Tab key, then the password. The hostname is not typed. A crypto entry types its words, spaces included. It also returns to idle after 5 seconds with the button released and the wheel still. Typing releases every key when it finishes. It does not press Enter. The tap or double tap that wakes the board leaves the entry untyped; a later double tap types it. A hold is reserved for the menu.
 
 ## Client
 
@@ -82,7 +82,9 @@ extension/native/install-mac.sh
 
 Run that from a terminal where `node` is the Node you use for this repo. If the native host is not installed, start the typer yourself with `cd host && npm start`, or open the web editor, which starts it.
 
-A key icon appears on a username, email, or password field. Click it to fill a matching website entry, or to generate a password. Submitting a login offers to save a new website entry, or to update one when the password changed. The toolbar popup lists logins for the current site. Open vault shows the same add, edit, and delete actions as the web editor, including generic and crypto entries.
+A key icon appears on a username, email, or password field. Click it to fill a matching website entry, or to generate a password. When that page is the active tab and the site has a saved login, a tap on the device wakes onto that login. If several logins match and a username or email is filled in, the tap uses that one. Otherwise it uses the first saved login for the site. Leaving the page clears the mark, and the next tap wakes onto entry 1. Submitting a login offers to save a new website entry, or to update one when the password changed. The toolbar popup lists logins for the current site. Open vault shows the same add, edit, and delete actions as the web editor, including generic and crypto entries.
+
+Chrome keeps saved passwords private from extensions. Import from Chrome, in the popup or the vault panel, opens Chrome's password settings so you can download the CSV, then imports the website logins that fit. The device holds 32 entries. A login already on the device is updated when its password differs. App logins, notes, and rows the device cannot type are skipped. Delete the CSV after importing. Chrome writes it as plain text.
 
 The extension id is fixed by the key in `extension/manifest.json`, and the typer only accepts that extension origin.
 
@@ -97,7 +99,11 @@ USB serial is 115200 baud, one JSON object per line. The client sends `req` and 
 {"op":"add","req":4,"type":"crypto","name":"Ledger","phrase":"correct horse battery staple"}
 {"op":"edit","req":5,"id":1,"type":"generic","name":"GitHub","password":"new password"}
 {"op":"delete","req":6,"id":1}
+{"op":"focus","req":7,"id":3}
+{"op":"focus","req":8,"id":null}
 ```
+
+`focus` marks the entry a tap from idle wakes onto. It does not move the selection by itself. `id` null clears the mark. The extension sends it for the active tab when that page has a username, email, or password field and the vault has a login for the site.
 
 A missing `type` on add or edit is generic, so an older name-and-password command still works. Edit cannot change an entry’s type. A record already on flash with no `type` loads as generic.
 

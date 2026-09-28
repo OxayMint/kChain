@@ -59,7 +59,6 @@ static constexpr unsigned long USB_TYPE_ACK_MS = 5000;
 static constexpr unsigned long USB_READY_MS = 3000;
 
 static constexpr int VAULT_MAX_ENTRIES = 32;
-static constexpr int VAULT_BUTTON_SLOTS = 5;
 static constexpr size_t VAULT_NAME_MAX = 48;
 static constexpr size_t VAULT_HOSTNAME_MAX = 253;
 static constexpr size_t VAULT_USERNAME_MAX = 128;
@@ -84,7 +83,5 @@ static_assert(PIN_ENCODER_A != PIN_ENCODER_B && PIN_ENCODER_A != PIN_BUTTON &&
 static_assert(ENCODER_COUNTS_PER_DETENT >= 1, "a detent needs at least one edge");
 static_assert(BUTTON_DOUBLE_TAP_MS > BUTTON_DEBOUNCE_MS, "double tap must outlast debounce");
 static_assert(BUTTON_HOLD_MS > BUTTON_DOUBLE_TAP_MS, "hold must outlast a double tap");
-static_assert(VAULT_BUTTON_SLOTS >= 1, "the button needs at least one slot");
-static_assert(VAULT_BUTTON_SLOTS <= VAULT_MAX_ENTRIES, "button slots exceed the vault");
 static_assert(VAULT_HOSTNAME_MAX >= VAULT_NAME_MAX, "a hostname needs at least a name's room");
 static_assert(VAULT_PHRASE_MAX > VAULT_PASSWORD_MAX, "a seed phrase needs more room than a password");

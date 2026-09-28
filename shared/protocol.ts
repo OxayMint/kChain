@@ -51,7 +51,8 @@ export type DeviceCommand =
       password: string;
     }
   | { op: "edit"; id: number; type: "crypto"; name: string; phrase: string }
-  | { op: "delete"; id: number };
+  | { op: "delete"; id: number }
+  | { op: "focus"; id: number | null };
 
 export type DeviceResponse = {
   op: string;

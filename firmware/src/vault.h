@@ -42,10 +42,15 @@ class Vault {
   int selectedIndex() const { return selected_; }
   uint32_t selectedId() const;
 
-  // How many entries the button can reach. Capped, and zero when empty.
+  // How many entries the wheel can reach. Zero when the vault is empty.
   int selectableCount() const;
   // Slot is 0-based within selectableCount(). False when out of range.
   bool selectSlot(int slot);
+  // id 0 clears the login a tap should wake onto. The selection stays put
+  // until that tap. False when id is not in the vault.
+  bool setFocus(uint32_t id, const char*& error);
+  // Index of the focused entry, or 0 when nothing is focused.
+  int wakeSlot() const;
 
   // Unused strings for the type are ignored. newId is set on success.
   bool add(EntryType type, const char* name, const char* username, const char* password,
@@ -61,6 +66,7 @@ class Vault {
   std::vector<VaultEntry> entries_;
   std::vector<uint32_t> persistedIds_;
   uint32_t nextId_;
+  uint32_t focusId_;
   int selected_;
   bool mutable_;
   const char* loadError_;

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { VaultEntry } from "@shared/protocol";
-import type { MatchResult, StatusResponse } from "../messages";
+import { FOCUS_IMPORT_KEY, type MatchResult, type StatusResponse } from "../messages";
 import { deviceLine, pageHost, typingLine } from "../status";
 
 export function Popup() {
@@ -33,6 +33,13 @@ export function Popup() {
   }
 
   async function openVault() {
+    if (tabId == null) return;
+    await chrome.sidePanel.open({ tabId });
+    window.close();
+  }
+
+  async function importChrome() {
+    await chrome.storage.session.set({ [FOCUS_IMPORT_KEY]: true });
     if (tabId == null) return;
     await chrome.sidePanel.open({ tabId });
     window.close();
@@ -89,6 +96,9 @@ export function Popup() {
           </section>
           <button type="button" className="button" onClick={() => void openVault()}>
             Open vault
+          </button>
+          <button type="button" className="quiet" onClick={() => void importChrome()}>
+            Import from Chrome
           </button>
         </div>
       </div>

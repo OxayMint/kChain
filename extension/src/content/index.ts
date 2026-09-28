@@ -3,6 +3,8 @@ import { hostMatches } from "@shared/hosts";
 import { validateHostname, validatePassword, validateUsername } from "@shared/protocol";
 import {
   isPasswordField,
+  isUsernameField,
+  loginPage,
   pairFor,
   pairInForm,
   pairToFill,
@@ -108,10 +110,45 @@ new MutationObserver(() => {
     ui.hideIcon();
     closeMenu();
   }
+  scheduleLoginReport(false);
 }).observe(document.documentElement, { childList: true, subtree: true });
 
+document.addEventListener(
+  "input",
+  (event) => {
+    if (!(event.target instanceof HTMLInputElement) || !isUsernameField(event.target)) return;
+    scheduleLoginReport(false);
+  },
+  true,
+);
+
+let loginTimer = 0;
+let loginReport = "";
+
+function scheduleLoginReport(force: boolean) {
+  window.clearTimeout(loginTimer);
+  loginTimer = window.setTimeout(() => {
+    const page = loginPage(document);
+    const key = `${page.present}\n${page.username}`;
+    if (!force && key === loginReport) return;
+    loginReport = key;
+    void chrome.runtime.sendMessage({
+      type: "page-login",
+      present: page.present,
+      username: page.username,
+    });
+  }, force ? 0 : 200);
+}
+
+scheduleLoginReport(true);
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (!message || message.type !== "fill") return;
+  if (!message) return;
+  if (message.type === "login-scan") {
+    scheduleLoginReport(true);
+    return;
+  }
+  if (message.type !== "fill") return;
   const next = pair ?? pairToFill(document);
   if (!next) {
     sendResponse({ filled: false });

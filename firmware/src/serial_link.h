@@ -3,7 +3,9 @@
 #include "vault.h"
 
 // USB serial (native CDC) line protocol. One JSON object per line.
-// Commands: list, add, edit, delete, usb_ready, type_ack.
+// Commands: list, add, edit, delete, focus, usb_ready, type_ack.
+// focus marks which entry a tap from idle wakes onto. It does not move
+// the selection by itself. A null id clears that mark.
 // Events are unsolicited and have no "ok".
 //
 // The ESP32-C3 USB port is serial, not a keyboard. When the USB typer has the

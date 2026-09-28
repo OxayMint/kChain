@@ -186,6 +186,7 @@ bool Vault::begin() {
   entries_.clear();
   persistedIds_.clear();
   nextId_ = 1;
+  focusId_ = 0;
   selected_ = -1;
   mutable_ = false;
   loadError_ = "Could not read the vault from flash.";
@@ -342,16 +343,33 @@ uint32_t Vault::selectedId() const {
   return entry == nullptr ? 0 : entry->id;
 }
 
-int Vault::selectableCount() const {
-  const int count = size();
-  if (count < VAULT_BUTTON_SLOTS) return count;
-  return VAULT_BUTTON_SLOTS;
-}
+int Vault::selectableCount() const { return size(); }
 
 bool Vault::selectSlot(int slot) {
   if (slot < 0 || slot >= selectableCount()) return false;
   selected_ = slot;
   return true;
+}
+
+bool Vault::setFocus(uint32_t id, const char*& error) {
+  if (id == 0) {
+    focusId_ = 0;
+    return true;
+  }
+  if (indexOf(id) < 0) {
+    error = "No entry with that id.";
+    return false;
+  }
+  focusId_ = id;
+  return true;
+}
+
+int Vault::wakeSlot() const {
+  if (focusId_ != 0) {
+    const int index = indexOf(focusId_);
+    if (index >= 0) return index;
+  }
+  return 0;
 }
 
 int Vault::indexOf(uint32_t id) const {
@@ -461,8 +479,10 @@ bool Vault::remove(uint32_t id, const char*& error) {
   const std::vector<VaultEntry> backup = entries_;
   const std::vector<uint32_t> backupIds = persistedIds_;
   const int backupSelected = selected_;
+  const uint32_t backupFocus = focusId_;
 
   entries_.erase(entries_.begin() + index);
+  if (focusId_ == id) focusId_ = 0;
   if (entries_.empty()) {
     selected_ = -1;
   } else if (selected_ == index) {
@@ -475,6 +495,7 @@ bool Vault::remove(uint32_t id, const char*& error) {
     entries_ = backup;
     persistedIds_ = backupIds;
     selected_ = backupSelected;
+    focusId_ = backupFocus;
     error = "Could not write the vault to flash.";
     return false;
   }

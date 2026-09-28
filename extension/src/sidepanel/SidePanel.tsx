@@ -1,9 +1,10 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { generatePassword } from "@shared/generate-password";
 import type { EntryType, VaultEntry, VaultSnapshot } from "@shared/protocol";
 import { entryCommand, entryError, nameLabel, typeLabel } from "../entries";
-import type { StatusResponse, VaultResult } from "../messages";
+import { FOCUS_IMPORT_KEY, type StatusResponse, type VaultResult } from "../messages";
 import { deviceLine, typingLine } from "../status";
+import { ImportChrome } from "./ImportChrome";
 
 type Busy = null | "add" | "edit" | "delete";
 
@@ -19,12 +20,15 @@ export function SidePanel() {
   const [formError, setFormError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<Record<number, boolean>>({});
   const [deleting, setDeleting] = useState<number | null>(null);
+  const [importLocked, setImportLocked] = useState(false);
+  const [importNonce, setImportNonce] = useState(0);
+  const importBusy = useRef(false);
 
   useEffect(() => {
     let stop = false;
     async function refresh() {
       const next = (await chrome.runtime.sendMessage({ type: "status" })) as StatusResponse;
-      if (!stop) setStatus(next);
+      if (!stop && !importBusy.current) setStatus(next);
     }
     void refresh();
     const timer = setInterval(() => void refresh(), 3000);
@@ -32,6 +36,23 @@ export function SidePanel() {
       stop = true;
       clearInterval(timer);
     };
+  }, []);
+
+  useEffect(() => {
+    function onChanged(changes: Record<string, chrome.storage.StorageChange>, area: string) {
+      if (area === "session" && changes[FOCUS_IMPORT_KEY]?.newValue === true) {
+        setImportNonce((current) => current + 1);
+        void chrome.storage.session.remove(FOCUS_IMPORT_KEY);
+      }
+    }
+    chrome.storage.onChanged.addListener(onChanged);
+    void chrome.storage.session.get(FOCUS_IMPORT_KEY).then((stored) => {
+      if (stored[FOCUS_IMPORT_KEY] === true) {
+        setImportNonce((current) => current + 1);
+        void chrome.storage.session.remove(FOCUS_IMPORT_KEY);
+      }
+    });
+    return () => chrome.storage.onChanged.removeListener(onChanged);
   }, []);
 
   const snapshot = status?.snapshot ?? null;
@@ -105,6 +126,7 @@ export function SidePanel() {
 
   const formKind = editing?.type ?? kind;
   const typing = typingLine(snapshot);
+  const locked = busy !== null || importLocked;
 
   return (
     <div>
@@ -120,11 +142,22 @@ export function SidePanel() {
         )}
 
         <div className="stack">
+          <ImportChrome
+            openToken={importNonce}
+            deviceReady={status?.phase === "ready" && snapshot != null}
+            entries={snapshot?.entries ?? []}
+            onSnapshot={(next) => setStatus({ phase: "ready", snapshot: next, message: null })}
+            onBusy={(next) => {
+              importBusy.current = next;
+              setImportLocked(next);
+            }}
+          />
+
           <EntryList
             snapshot={snapshot}
             revealed={revealed}
             deleting={deleting}
-            busy={busy !== null}
+            busy={locked}
             onReveal={(id) => setRevealed((current) => ({ ...current, [id]: !current[id] }))}
             onEdit={startEdit}
             onAskDelete={setDeleting}
@@ -145,42 +178,37 @@ export function SidePanel() {
                   type="button"
                   className="quiet"
                   aria-pressed={formKind === option}
-                  disabled={busy !== null || editing !== null}
+                  disabled={locked || editing !== null}
                   onClick={() => setKind(option)}
                 >
                   {typeLabel(option)}
                 </button>
               ))}
             </div>
-            <Field label={nameLabel(formKind)} value={name} onChange={setName} disabled={busy !== null} />
+            <Field label={nameLabel(formKind)} value={name} onChange={setName} disabled={locked} />
             {formKind === "website" && (
-              <Field
-                label="Username"
-                value={username}
-                onChange={setUsername}
-                disabled={busy !== null}
-              />
+              <Field label="Username" value={username} onChange={setUsername} disabled={locked} />
             )}
             {formKind !== "crypto" && (
               <Field
                 label="Password"
                 value={password}
                 onChange={setPassword}
-                disabled={busy !== null}
+                disabled={locked}
                 secret
                 onGenerate={() => setPassword(generatePassword())}
               />
             )}
             {formKind === "crypto" && (
-              <Field label="Phrase" value={phrase} onChange={setPhrase} disabled={busy !== null} />
+              <Field label="Phrase" value={phrase} onChange={setPhrase} disabled={locked} />
             )}
             {formError && <p className="error">{formError}</p>}
             <div className="actions">
-              <button type="submit" className="button" disabled={busy !== null || status?.phase !== "ready"}>
+              <button type="submit" className="button" disabled={locked || status?.phase !== "ready"}>
                 {editing ? "Save changes" : "Add entry"}
               </button>
               {editing && (
-                <button type="button" className="quiet" onClick={cancelEdit} disabled={busy !== null}>
+                <button type="button" className="quiet" onClick={cancelEdit} disabled={locked}>
                   Cancel
                 </button>
               )}

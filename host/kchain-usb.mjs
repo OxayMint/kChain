@@ -297,7 +297,7 @@ function commandFrom(body) {
     return { error: "Missing command." };
   }
   const op = parsed.op;
-  if (op !== "list" && op !== "add" && op !== "edit" && op !== "delete") {
+  if (op !== "list" && op !== "add" && op !== "edit" && op !== "delete" && op !== "focus") {
     return { error: "Unknown command." };
   }
   const command = { ...parsed };

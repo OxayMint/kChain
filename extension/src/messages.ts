@@ -31,6 +31,8 @@ export type ClassifyResult =
   | { action: "update"; id: number }
   | { action: "unavailable"; message: string };
 
+export const FOCUS_IMPORT_KEY = "focusImport";
+
 export type ExtensionRequest =
   | { type: "status" }
   | { type: "matches"; host?: string }
@@ -41,7 +43,9 @@ export type ExtensionRequest =
   | { type: "pending-clear" }
   | { type: "ignore-host"; host?: string }
   | { type: "open-vault" }
-  | { type: "fill"; username: string; password: string };
+  | { type: "fill"; username: string; password: string }
+  | { type: "page-login"; present: boolean; username: string }
+  | { type: "login-scan" };
 
 export function messageOf(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;

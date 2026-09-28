@@ -1,4 +1,5 @@
 import { hostMatches } from "@shared/hosts";
+import { entryForPage } from "@shared/page-entry";
 import {
   snapshotFrom,
   type DeviceCommand,
@@ -16,6 +17,7 @@ import {
   type TyperPhase,
   type VaultResult,
 } from "./messages";
+import { pageHost } from "./status";
 
 const TYPER_URL = "http://127.0.0.1:4318";
 const NATIVE_HOST = "com.kchain.usb";
@@ -27,10 +29,34 @@ let ensuring: Promise<void> | null = null;
 chrome.runtime.onInstalled.addListener(() => {
   void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => {});
   void ensureTyper();
+  void refreshActiveLogin();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   void ensureTyper();
+  void refreshActiveLogin();
+});
+
+chrome.tabs.onActivated.addListener(() => {
+  void refreshActiveLogin();
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  loginsByTab.delete(tabId);
+  pokeFocus();
+});
+
+chrome.tabs.onUpdated.addListener((tabId, info) => {
+  if (info.status === "loading" || info.url) {
+    loginsByTab.delete(tabId);
+    pokeFocus();
+  }
+  if (info.status === "complete" || info.url) void requestScan(tabId);
+});
+
+chrome.windows.onFocusChanged.addListener((windowId) => {
+  if (windowId === chrome.windows.WINDOW_ID_NONE) return;
+  void refreshActiveLogin();
 });
 
 chrome.runtime.onMessage.addListener((message: ExtensionRequest, sender, sendResponse) => {
@@ -90,6 +116,17 @@ async function handle(
       const tabId = sender.tab?.id;
       if (tabId == null) return { ok: false, message: "Open kChain from the toolbar." };
       void chrome.sidePanel.open({ tabId });
+      return { ok: true };
+    }
+    case "page-login": {
+      const tabId = sender.tab?.id;
+      const host = frameHost(sender);
+      if (tabId == null || !host) return { ok: false };
+      rememberLogin(tabId, sender.frameId ?? 0, {
+        host,
+        present: message.present,
+        username: message.username.slice(0, 128),
+      });
       return { ok: true };
     }
     default:
@@ -344,3 +381,147 @@ async function clearPending(tabId: number | undefined): Promise<void> {
   delete map[key];
   await chrome.storage.session.set({ [PENDING_KEY]: map });
 }
+
+type FrameLogin = { host: string; present: boolean; username: string };
+
+const loginsByTab = new Map<number, Map<number, FrameLogin>>();
+let sentFocusId: number | null | undefined;
+let focusGeneration = 0;
+let focusTimer: ReturnType<typeof setTimeout> | null = null;
+let focusRetry: ReturnType<typeof setTimeout> | null = null;
+let retryArmed = true;
+let deviceEvents: EventSource | null = null;
+let deviceEventRetry: ReturnType<typeof setTimeout> | null = null;
+
+function rememberLogin(tabId: number, frameId: number, login: FrameLogin) {
+  let frames = loginsByTab.get(tabId);
+  if (!frames) {
+    frames = new Map();
+    loginsByTab.set(tabId, frames);
+  }
+  const previous = frames.get(frameId);
+  frames.set(frameId, login);
+  if (
+    previous &&
+    previous.host === login.host &&
+    previous.present === login.present &&
+    previous.username === login.username
+  ) {
+    return;
+  }
+  pokeFocus();
+}
+
+function pokeFocus() {
+  retryArmed = true;
+  scheduleFocus();
+}
+
+function scheduleFocus() {
+  watchDevice();
+  if (focusTimer) clearTimeout(focusTimer);
+  focusTimer = setTimeout(() => {
+    focusTimer = null;
+    void pushFocus();
+  }, 200);
+}
+
+function armFocusRetry() {
+  if (!retryArmed || focusRetry) return;
+  retryArmed = false;
+  focusRetry = setTimeout(() => {
+    focusRetry = null;
+    scheduleFocus();
+  }, 2000);
+}
+
+async function pushFocus() {
+  const generation = ++focusGeneration;
+  let id: number | null;
+  try {
+    id = await desiredFocusId();
+  } catch {
+    armFocusRetry();
+    return;
+  }
+  if (generation !== focusGeneration || id === sentFocusId) return;
+  try {
+    await deviceCommand({ op: "focus", id });
+  } catch {
+    armFocusRetry();
+    return;
+  }
+  if (generation !== focusGeneration) return;
+  sentFocusId = id;
+}
+
+async function desiredFocusId(): Promise<number | null> {
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const host = pageHost(tab?.url);
+  if (!host || tab?.id == null) return null;
+  const frames = loginsByTab.get(tab.id);
+  if (!frames) return null;
+  let present = false;
+  let username = "";
+  for (const frame of frames.values()) {
+    if (!frame.present || !hostMatches(host, frame.host)) continue;
+    present = true;
+    if (!username && frame.username) username = frame.username;
+  }
+  if (!present) return null;
+  return entryForPage((await readVault()).entries, host, username)?.id ?? null;
+}
+
+async function requestScan(tabId: number) {
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: "login-scan" });
+  } catch {
+    // This page has no content script.
+  }
+}
+
+async function refreshActiveLogin() {
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (tab?.id != null) await requestScan(tab.id);
+  pokeFocus();
+}
+
+function watchDevice() {
+  if (deviceEvents || deviceEventRetry) return;
+  let source: EventSource;
+  try {
+    source = new EventSource(`${TYPER_URL}/events`);
+  } catch {
+    deviceEventRetry = setTimeout(() => {
+      deviceEventRetry = null;
+      watchDevice();
+    }, 10000);
+    return;
+  }
+  deviceEvents = source;
+  source.onmessage = (message) => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(message.data);
+    } catch {
+      return;
+    }
+    if (!parsed || typeof parsed !== "object" || (parsed as { event?: unknown }).event !== "ready") {
+      return;
+    }
+    sentFocusId = undefined;
+    pokeFocus();
+  };
+  source.onerror = () => {
+    source.close();
+    if (deviceEvents === source) deviceEvents = null;
+    if (deviceEventRetry) return;
+    deviceEventRetry = setTimeout(() => {
+      deviceEventRetry = null;
+      watchDevice();
+    }, 10000);
+  };
+}
+
+watchDevice();
+void refreshActiveLogin();

@@ -35,6 +35,23 @@ export function isVisibleField(input: HTMLInputElement): boolean {
   return rect.width >= 2 && rect.height >= 2;
 }
 
+export function loginPage(doc: Document): { present: boolean; username: string } {
+  let present = false;
+  let username = "";
+  for (const node of doc.querySelectorAll("input")) {
+    if (!(node instanceof HTMLInputElement) || !isVisibleField(node)) continue;
+    if (isPasswordField(node)) {
+      present = true;
+      continue;
+    }
+    if (!isUsernameField(node)) continue;
+    present = true;
+    const value = node.value.trim();
+    if (value && !username) username = value;
+  }
+  return { present, username };
+}
+
 export function pairFor(input: HTMLInputElement): CredentialPair | null {
   if (!isVisibleField(input)) return null;
   if (isPasswordField(input)) return pairFromPassword(input);
