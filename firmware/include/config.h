@@ -9,18 +9,14 @@
 // The button is active-low. Wire the switch between its GPIO and GND.
 // The internal pull-up holds the idle pin high; a press reads low.
 //
-// The button is GPIO 7. A tap wakes the board. While awake, a press held
-// past SEARCH_EDIT_ARM_MS appends a blinking search letter. Releasing it
-// leaves the letter solid. A shorter press is a click, so two of them can
-// be a double tap. A double tap types the selected entry, and drops a letter
-// if that gesture already added one. The wheel changes the blinking letter
-// until release. Delete sits between Z and A.
+// The button is GPIO 7. A tap on the home screen opens the highlighted
+// section. The tap is reported after the double-tap window, so a double tap
+// does not also open it. Holding the button for BUTTON_HOLD_MS returns to
+// home. A double tap types the highlighted stored entry.
 //
 // The mouse-wheel encoder navigates (body marked H-13, 13 mm tall).
-// A is GPIO 8, B is GPIO 9, and the common pin is ground. Wheel up steps
-// to the next matching entry and wheel down steps to the previous one;
-// both wrap. While a search letter is blinking, the wheel changes that
-// letter instead, with a delete mark between Z and A.
+// A is GPIO 8, B is GPIO 9, and the common pin is ground. Wheel up moves
+// to the next row and wheel down moves to the previous one. Both wrap.
 // These wheels are 24 detents and 12 pulses
 // per turn, so one click is two quadrature transitions.
 //
@@ -29,7 +25,7 @@
 // GPIO 1, SDA (MOSI) is GPIO 2, RST is GPIO 3, DC is GPIO 4, CS is GPIO 5,
 // and BL is GPIO 6. BL driven high turns the backlight on. GPIO 3 is a
 // strapping pin; holding reset high after boot is that strap's idle level.
-// Bring-up draws a color pattern. The menu is not on this glass yet.
+// The glass shows the menu: kChain at the top left, and a blue highlight.
 //
 // Leave these alone:
 //   GPIO 0, 45, 46  strapping. Not on this header.

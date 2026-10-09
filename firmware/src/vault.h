@@ -46,8 +46,8 @@ class Vault {
   int selectableCount() const;
   // Slot is 0-based within selectableCount(). False when out of range.
   bool selectSlot(int slot);
-  // id 0 clears the login a tap should wake onto. The selection stays put
-  // until that tap. False when id is not in the vault.
+  // id 0 clears the login the extension stored for the current page.
+  // The selection stays put. False when id is not in the vault.
   bool setFocus(uint32_t id, const char*& error);
   // Index of the focused entry, or 0 when nothing is focused.
   int wakeSlot() const;

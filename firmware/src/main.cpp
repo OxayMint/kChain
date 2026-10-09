@@ -3,9 +3,9 @@
 #include "button_input.h"
 #include "config.h"
 #include "encoder_input.h"
-#include "menu.h"
 #include "serial_link.h"
 #include "st7789_display.h"
+#include "ui.h"
 #include "usb_keyboard.h"
 #include "vault.h"
 
@@ -14,7 +14,7 @@ EncoderInput encoderInput;
 Input& input = buttonInput;
 Vault vault;
 SerialLink serialLink;
-Menu menu;
+Ui ui;
 St7789Display panel;
 bool panelReady = false;
 
@@ -26,24 +26,17 @@ extern "C" bool btInUse() { return false; }
 enum class Activity : uint8_t { Idle, Active };
 
 Activity activity = Activity::Idle;
-// The gesture that leaves idle only wakes the board. A later double tap types.
-bool wakeGesture = false;
 unsigned long lastActivityMs = 0;
-// A press may open search edit once it has been down long enough. A release
-// before that is a click, and two clicks are a double tap.
-bool searchArm = false;
-unsigned long searchArmMs = 0;
-// That press did open search edit, so a double tap drops the new letter.
-bool searchLetterPending = false;
 
-// The panel is showing the bring-up pattern. The menu is not drawn on it yet.
-void showMenu() {}
+void showMenu() {
+  if (panelReady) ui.paint(panel, vault);
+}
 
-// Runs between HID keys. loop() is not turning, so the name would otherwise
-// sit still, and a command on the serial port would wait until typing ends.
+// Runs between HID keys. A command on the serial port would otherwise wait
+// until typing ends, and an edit would leave the glass on the old names.
 void tickWhileTyping() {
   serialLink.poll(vault);
-  menu.tickSend(millis());
+  ui.sync(vault);
   showMenu();
 }
 
@@ -58,22 +51,31 @@ void setup() {
   Serial.begin(SERIAL_BAUD);
 
   panelReady = panel.begin();
-  if (panelReady) panel.drawTest();
   input.begin();
   vault.begin();
   encoderInput.begin();
-  menu.sync(vault, false);
+  ui.sync(vault);
   showMenu();
   serialLink.emitReady(vault);
 }
 
 void goIdle() {
+  if (activity == Activity::Idle) return;
   activity = Activity::Idle;
-  wakeGesture = false;
-  searchArm = false;
-  searchLetterPending = false;
   serialLink.setActive(false);
   serialLink.emitIdle();
+}
+
+void publishSelection() {
+  const int slot = ui.highlightedSlot(vault);
+  if (slot < 0) return;
+  const bool woke = activity == Activity::Idle;
+  const int before = vault.selectedIndex();
+  activity = Activity::Active;
+  serialLink.setActive(true);
+  lastActivityMs = millis();
+  if (!vault.selectSlot(slot)) return;
+  if (woke || vault.selectedIndex() != before) serialLink.emitSelected(vault);
 }
 
 bool typeSelected() {
@@ -88,13 +90,8 @@ bool typeSelected() {
     serialLink.emitTypeFailed("The USB keyboard is not connected.");
     return false;
   }
-  menu.beginSend();
-  showMenu();
   const char* error = nullptr;
   if (!usbKeyboard.typeEntry(entry, error, tickWhileTyping)) {
-    menu.cancelSend();
-    menu.sync(vault, true);
-    showMenu();
     serialLink.emitTypeFailed(error);
     return false;
   }
@@ -102,92 +99,49 @@ bool typeSelected() {
   return true;
 }
 
-void applySelection(int slot) {
-  if (!vault.selectSlot(slot)) return;
-  serialLink.emitSelected(vault);
-}
-
 void loop() {
   serialLink.setUsbTyping(usbKeyboard.mounted());
   serialLink.poll(vault);
 
-  // Tap, double tap, and hold. A press wakes immediately, before the
-  // gesture is classified.
+  // A tap opens a home row. A hold returns home. A double tap types.
+  // The tap is reported only after the double-tap window closes.
   const InputEvent event = buttonInput.poll();
-  if (buttonInput.consumePress()) {
-    if (activity == Activity::Idle) {
-      if (vault.selectSlot(vault.wakeSlot())) {
-        activity = Activity::Active;
-        wakeGesture = true;
-        serialLink.setActive(true);
-        lastActivityMs = millis();
-        serialLink.emitSelected(vault);
-      }
-    } else {
-      lastActivityMs = millis();
-      // The second press of a double tap types. It must not add another letter.
-      if (!buttonInput.inSecondTap()) {
-        searchArm = true;
-        searchArmMs = millis();
-      }
+  buttonInput.consumePress();
+  if (event == InputEvent::Tap) {
+    lastActivityMs = millis();
+    if (ui.onTap()) publishSelection();
+  } else if (event == InputEvent::Hold) {
+    lastActivityMs = millis();
+    ui.onHold();
+  } else if (event == InputEvent::DoubleTap) {
+    lastActivityMs = millis();
+    if (ui.canType(vault)) {
+      publishSelection();
+      if (typeSelected()) goIdle();
     }
   }
-  // Still down after the click window: this press is search edit, not a click.
-  if (searchArm && buttonInput.held() && millis() - searchArmMs >= SEARCH_EDIT_ARM_MS) {
-    searchArm = false;
-    const int selectedBefore = vault.selectedIndex();
-    menu.beginSearchEdit(vault);
-    searchLetterPending = menu.editing();
-    if (vault.selectedIndex() != selectedBefore) serialLink.emitSelected(vault);
-  }
-  if (!buttonInput.held()) searchArm = false;
 
-  if (event == InputEvent::DoubleTap && wakeGesture) {
-    wakeGesture = false;
+  // Wheel up is positive. Wheel down is negative.
+  const int steps = encoderInput.takeSteps();
+  if (steps != 0) {
     lastActivityMs = millis();
-  } else if (activity == Activity::Active && event == InputEvent::DoubleTap) {
-    lastActivityMs = millis();
-    const int selectedBefore = vault.selectedIndex();
-    if (searchLetterPending) menu.cancelLastLetter(vault);
-    searchLetterPending = false;
-    if (vault.selectedIndex() != selectedBefore) serialLink.emitSelected(vault);
-    menu.sync(vault, true);
-    if (menu.canType() && typeSelected()) goIdle();
-  } else if (event == InputEvent::Tap || event == InputEvent::Hold) {
-    wakeGesture = false;
-    lastActivityMs = millis();
-    // The click stood alone, so a letter added by holding it stays.
-    searchLetterPending = false;
-  }
-
-  if (menu.editing() && !buttonInput.held()) menu.endSearchEdit();
-
-  // Wheel up is positive. Wheel down is negative. A turn also wakes the board.
-  // A letter change that stays on the same entry does not tell the host again.
-  const int selectedBefore = vault.selectedIndex();
-  if (menu.onWheel(vault, encoderInput.takeSteps())) {
-    activity = Activity::Active;
-    serialLink.setActive(true);
-    lastActivityMs = millis();
-    if (vault.selectedIndex() != selectedBefore) serialLink.emitSelected(vault);
+    ui.onWheel(vault, steps);
+    publishSelection();
   }
 
   // A held button is activity. The idle timeout starts at release.
   if (buttonInput.held()) lastActivityMs = millis();
 
+  ui.sync(vault);
   if (activity == Activity::Active) {
-    const int count = vault.selectableCount();
-    if (count == 0 || millis() - lastActivityMs >= ACTIVE_IDLE_MS) {
-      goIdle();
-    } else {
-      const int index = vault.selectedIndex();
-      if (index < 0 || index >= count) applySelection(index < 0 ? 0 : count - 1);
-      if (menu.refit(vault)) serialLink.emitSelected(vault);
+    const uint32_t beforeId = vault.selectedId();
+    const int slot = ui.highlightedSlot(vault);
+    if (slot >= 0 && vault.selectSlot(slot) && vault.selectedId() != beforeId) {
+      serialLink.emitSelected(vault);
     }
+    if (vault.selectableCount() == 0 || millis() - lastActivityMs >= ACTIVE_IDLE_MS) goIdle();
   }
 
-  menu.tickBlink(millis());
-  menu.sync(vault, activity == Activity::Active);
   showMenu();
 
   bool usbReady = false;

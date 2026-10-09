@@ -4,8 +4,9 @@
 
 // USB serial (native CDC) line protocol. One JSON object per line.
 // Commands: list, add, edit, delete, focus.
-// focus marks which entry a tap from idle wakes onto. It does not move
-// the selection by itself. A null id clears that mark.
+// focus stores the login the extension picked for the current page.
+// It does not move the selection, and the menu does not open that login.
+// A null id clears that mark.
 // Events are unsolicited and have no "ok".
 //
 // Typing is the USB keyboard on this port, not a command. usbTyping is

@@ -1,6 +1,6 @@
 # kChain
 
-kChain is a vault that lives on an ESP32-S3. This experimental build keeps the radio off. The firmware releases the Bluetooth controller at boot and never starts Wi-Fi. A roller encoder picks an entry, and a double tap types it through the USB cable into whatever field is focused on the computer. A browser page edits the vault over the same USB port while the board is plugged in, and shows which entry the wheel is on.
+kChain is a vault that lives on an ESP32-S3. This experimental build keeps the radio off. The firmware releases the Bluetooth controller at boot and never starts Wi-Fi. The display shows a menu. The wheel moves the highlight, a tap opens a section, and a double tap types the highlighted entry through the USB cable into whatever field is focused on the computer. A browser page edits the vault over the same USB port while the board is plugged in, and shows which entry the wheel is on.
 
 Entries are stored in the clear on device flash. There is no encryption and no unlock PIN. An entry is one of three types. Generic is a name and a password. Website is a hostname, a username or email, and a password. Crypto is a label and several words separated by spaces.
 
@@ -10,9 +10,9 @@ The header is labeled 1–13, GND, 5V, 3V, RX, and TX. The number is the GPIO.
 
 The button is active-low. Wire the switch between GPIO 7 and GND. The firmware enables the internal pull-up. Change `PIN_BUTTON` in `firmware/include/config.h` and rebuild. The file rejects pins this board cannot use.
 
-The mouse-wheel encoder navigates (the H-13 mark is the 13 mm body). Wire its common pin to GND, A to GPIO 8, and B to GPIO 9. The common pin is the middle one. Each detent steps one matching entry. While a search letter is blinking, a detent changes that letter instead. The wheel walks A to Z and then a delete mark, and both directions wrap. Wheel up moves forward and wheel down moves back. Swap A and B if those directions feel backwards.
+The mouse-wheel encoder navigates (the H-13 mark is the 13 mm body). Wire its common pin to GND, A to GPIO 8, and B to GPIO 9. The common pin is the middle one. Each detent moves the highlight one row. Wheel up moves forward and wheel down moves back. Swap A and B if those directions feel backwards.
 
-The panel is a 2.0 inch ST7789, 240×320, on SPI. Power it from 3.3 V. Module SCL (clock) is GPIO 1, SDA (MOSI) is GPIO 2, RST is GPIO 3, DC is GPIO 4, CS is GPIO 5, and BL (backlight) is GPIO 6. This build draws a color test on that glass: red, green, and blue bands, a white frame, and a black OK. The search query and the two matching names are not drawn yet. The editor still shows idle and selection state.
+The panel is a 2.0 inch ST7789, 240×320, on SPI. Power it from 3.3 V. Module SCL (clock) is GPIO 1, SDA (MOSI) is GPIO 2, RST is GPIO 3, DC is GPIO 4, CS is GPIO 5, and BL (backlight) is GPIO 6. The glass shows the menu: kChain at the top left, and a blue highlight on the selected row.
 
 Leave these alone:
 
@@ -38,9 +38,13 @@ pio device monitor
 
 If upload never starts, hold BOOT (GPIO 0), tap RST, release BOOT, and run the upload again. The serial monitor does not assert DTR/RTS, so opening it should not reset the chip.
 
-An empty vault is valid. On first boot the firmware creates one. The board starts idle, and a press does nothing until there is an entry. USB serial keeps running in idle. The radio does not. While the editor is connected it shows “Device is idle”.
+An empty vault is valid. On first boot the firmware creates one. The board starts idle. USB serial keeps running in idle. The radio does not. While the editor is connected it shows “Device is idle”.
 
-A tap wakes the board onto entry 1, or onto the login the extension has marked for the current page. The search query is empty after a wake, so wheel up and wheel down step through every entry and wrap. A turn also wakes the board onto the entry it lands on. The editor then shows that entry, for example “On the device: 2. github.com”. The glass keeps the color test while the board is awake or idle. Wheel up moves to the next match. Wheel down moves to the previous one. A double tap types the selected entry as a USB keyboard, then the board returns to idle. If the computer has not set up that keyboard, the double tap does not type. A generic entry types its password. A website entry types the username, a Tab key, then the password. The hostname is not typed. A crypto entry types its words, spaces included. It also returns to idle after 5 seconds with the button released and the wheel still. Typing releases every key when it finishes. It does not press Enter. The tap or double tap that wakes the board leaves the entry untyped; a later double tap types it. Holding the button while awake adds a blinking letter, starting at A. A press released within 200 ms does not add a letter; it is a click, and a second click within 500 ms is a double tap. Until the button is released, the wheel changes that letter from A to Z, with a delete mark between them. Landing on delete removes the previous letter. The list narrows to names that start with the query, ignoring case. Releasing the button leaves the letter solid. Another press adds the next letter. After that the wheel steps through matches only. A double tap types. If that gesture had already added a letter, the letter is removed first. If nothing matches, a double tap does not type.
+The glass shows the menu as soon as the panel is up. kChain is at the top left of every screen. Home lists Single, Web, Crypto, and Help. The highlighted row is blue. The wheel moves that highlight and wraps. Wheel up moves to the next row. Wheel down moves to the previous one. A tap opens the highlighted home row. The tap is reported only after the double-tap window, so a double tap does not also open it. Holding the button for a second returns to home.
+
+Single lists generic names. Web lists each website with the account under the hostname. Crypto lists labels. Passwords and phrases stay off the glass. Help reads “Nothing here yet.” An empty section reads “None saved.”
+
+A double tap on a highlighted stored entry types it as a USB keyboard, then the board tells the editor it is idle. The screen stays on that list. Home, Help, and an empty list do not type. If the computer has not set up the keyboard, the double tap does not type. A generic entry types its password. A website entry types the username, a Tab key, then the password. The hostname is not typed. A crypto entry types its words, spaces included. The board also tells the editor it is idle after 5 seconds with the button released and the wheel still. Typing releases every key when it finishes. It does not press Enter. The glass does not jump to the login the extension has marked; that mark is only stored.
 
 ## Client
 
@@ -82,7 +86,7 @@ extension/native/install-mac.sh
 
 Run that from a terminal where `node` is the Node you use for this repo. If the native host is not installed, start the host program yourself with `cd host && npm start`, or open the web editor, which starts it.
 
-A key icon appears on a username, email, or password field. Click it to fill a matching website entry, or to generate a password. When that page is the active tab and the site has a saved login, a tap on the device wakes onto that login. If several logins match and a username or email is filled in, the tap uses that one. Otherwise it uses the first saved login for the site. Leaving the page clears the mark, and the next tap wakes onto entry 1. Submitting a login offers to save a new website entry, or to update one when the password changed. The toolbar popup lists logins for the current site. Open vault shows the same add, edit, and delete actions as the web editor, including generic and crypto entries.
+A key icon appears on a username, email, or password field. Click it to fill a matching website entry, or to generate a password. When that page is the active tab and the site has a saved login, the extension stores that login on the device. The menu does not open it; the wheel chooses the row. If several logins match and a username or email is filled in, the stored login is that one. Otherwise it is the first saved login for the site. Leaving the page clears the mark. Submitting a login offers to save a new website entry, or to update one when the password changed. The toolbar popup lists logins for the current site. Open vault shows the same add, edit, and delete actions as the web editor, including generic and crypto entries.
 
 Chrome keeps saved passwords private from extensions. Import from Chrome, in the popup or the vault panel, opens Chrome's password settings so you can download the CSV, then imports the website logins that fit. The device holds 32 entries. A login already on the device is updated when its password differs. App logins, notes, and rows the device cannot type are skipped. Delete the CSV after importing. Chrome writes it as plain text.
 
@@ -103,7 +107,7 @@ USB serial is 115200 baud, one JSON object per line. The client sends `req` and 
 {"op":"focus","req":8,"id":null}
 ```
 
-`focus` marks the entry a tap from idle wakes onto. It does not move the selection by itself. `id` null clears the mark. The extension sends it for the active tab when that page has a username, email, or password field and the vault has a login for the site.
+`focus` stores the login the extension picked for the current page. It does not move the selection, and the menu does not open that login. `id` null clears the mark. The extension sends it for the active tab when that page has a username, email, or password field and the vault has a login for the site.
 
 A missing `type` on add or edit is generic, so an older name-and-password command still works. Edit cannot change an entry’s type. A record already on flash with no `type` loads as generic.
 
