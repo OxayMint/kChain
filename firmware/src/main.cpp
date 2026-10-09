@@ -6,6 +6,7 @@
 #include "menu.h"
 #include "serial_link.h"
 #include "st7789_display.h"
+#include "usb_keyboard.h"
 #include "vault.h"
 
 ButtonInput buttonInput;
@@ -38,9 +39,10 @@ bool searchLetterPending = false;
 // The panel is showing the bring-up pattern. The menu is not drawn on it yet.
 void showMenu() {}
 
-// Runs while requestUsbType waits. loop() is not turning, so the name
-// would otherwise sit still until the computer answers.
-void tickSendAnimation() {
+// Runs between HID keys. loop() is not turning, so the name would otherwise
+// sit still, and a command on the serial port would wait until typing ends.
+void tickWhileTyping() {
+  serialLink.poll(vault);
   menu.tickSend(millis());
   showMenu();
 }
@@ -49,8 +51,10 @@ void setup() {
   // USB on this chip uses its own clock, so the serial port stays up.
   setCpuFrequencyMhz(CPU_MHZ);
 
-  // Native USB CDC. RX and TX are not used. The radio stays down:
-  // Bluetooth memory was released at boot, and Wi-Fi is never started.
+  // Native USB is serial and a keyboard. The keyboard interface is already
+  // registered. RX and TX are not used. The radio stays down: Bluetooth
+  // memory was released at boot, and Wi-Fi is never started.
+  usbKeyboard.begin();
   Serial.begin(SERIAL_BAUD);
 
   panelReady = panel.begin();
@@ -78,16 +82,16 @@ bool typeSelected() {
     serialLink.emitTypeFailed("No entry is selected.");
     return false;
   }
-  // Copy before the USB wait. A command handled while waiting can edit the vault.
+  // Copy before typing. A command handled between keys can edit the vault.
   const VaultEntry entry = *current;
-  if (!serialLink.usbTypingReady()) {
-    serialLink.emitTypeFailed("The USB typer is not running.");
+  if (!usbKeyboard.mounted()) {
+    serialLink.emitTypeFailed("The USB keyboard is not connected.");
     return false;
   }
   menu.beginSend();
   showMenu();
   const char* error = nullptr;
-  if (!serialLink.requestUsbType(entry, vault, error, tickSendAnimation)) {
+  if (!usbKeyboard.typeEntry(entry, error, tickWhileTyping)) {
     menu.cancelSend();
     menu.sync(vault, true);
     showMenu();
@@ -104,6 +108,7 @@ void applySelection(int slot) {
 }
 
 void loop() {
+  serialLink.setUsbTyping(usbKeyboard.mounted());
   serialLink.poll(vault);
 
   // Tap, double tap, and hold. A press wakes immediately, before the

@@ -40,7 +40,7 @@ If upload never starts, hold BOOT (GPIO 0), tap RST, release BOOT, and run the u
 
 An empty vault is valid. On first boot the firmware creates one. The board starts idle, and a press does nothing until there is an entry. USB serial keeps running in idle. The radio does not. While the editor is connected it shows “Device is idle”.
 
-A tap wakes the board onto entry 1, or onto the login the extension has marked for the current page. The search query is empty after a wake, so wheel up and wheel down step through every entry and wrap. A turn also wakes the board onto the entry it lands on. The editor then shows that entry, for example “On the device: 2. github.com”. The glass keeps the color test while the board is awake or idle. Wheel up moves to the next match. Wheel down moves to the previous one. A double tap types the selected entry through the USB typer, then the board returns to idle. If the USB typer is not running, the double tap does not type. A generic entry types its password. A website entry types the username, a Tab key, then the password. The hostname is not typed. A crypto entry types its words, spaces included. It also returns to idle after 5 seconds with the button released and the wheel still. Typing releases every key when it finishes. It does not press Enter. The tap or double tap that wakes the board leaves the entry untyped; a later double tap types it. Holding the button while awake adds a blinking letter, starting at A. A press released within 200 ms does not add a letter; it is a click, and a second click within 500 ms is a double tap. Until the button is released, the wheel changes that letter from A to Z, with a delete mark between them. Landing on delete removes the previous letter. The list narrows to names that start with the query, ignoring case. Releasing the button leaves the letter solid. Another press adds the next letter. After that the wheel steps through matches only. A double tap types. If that gesture had already added a letter, the letter is removed first. If nothing matches, a double tap does not type.
+A tap wakes the board onto entry 1, or onto the login the extension has marked for the current page. The search query is empty after a wake, so wheel up and wheel down step through every entry and wrap. A turn also wakes the board onto the entry it lands on. The editor then shows that entry, for example “On the device: 2. github.com”. The glass keeps the color test while the board is awake or idle. Wheel up moves to the next match. Wheel down moves to the previous one. A double tap types the selected entry as a USB keyboard, then the board returns to idle. If the computer has not set up that keyboard, the double tap does not type. A generic entry types its password. A website entry types the username, a Tab key, then the password. The hostname is not typed. A crypto entry types its words, spaces included. It also returns to idle after 5 seconds with the button released and the wheel still. Typing releases every key when it finishes. It does not press Enter. The tap or double tap that wakes the board leaves the entry untyped; a later double tap types it. Holding the button while awake adds a blinking letter, starting at A. A press released within 200 ms does not add a letter; it is a click, and a second click within 500 ms is a double tap. Until the button is released, the wheel changes that letter from A to Z, with a delete mark between them. Landing on delete removes the previous letter. The list narrows to names that start with the query, ignoring case. Releasing the button leaves the letter solid. Another press adds the next letter. After that the wheel steps through matches only. A double tap types. If that gesture had already added a letter, the letter is removed first. If nothing matches, a double tap does not type.
 
 ## Client
 
@@ -52,19 +52,19 @@ npm install
 npm run dev
 ```
 
-Then open [http://localhost:4317](http://localhost:4317). Plug in the board and the page connects. The first time, install the typer’s dependencies too: `cd host && npm install`. The page starts that program when you open it.
+Then open [http://localhost:4317](http://localhost:4317). Plug in the board and the page connects. The first time, install the host program’s dependencies too: `cd host && npm install`. The page starts that program when you open it.
 
 ## USB typing
 
-The ESP32-S3 USB port is a serial port. It cannot appear as a USB keyboard. Opening this page starts a typer on the computer, and a double tap types the selected entry into the focused field. A website entry is the username, a Tab, then the password.
+The native USB port is a serial port and a keyboard at the same time. A double tap types the selected entry into the focused field. A website entry is the username, a Tab, then the password. This works with the page closed. The computer does not need an Accessibility permission.
 
-Plug in the board and open the page. It connects when the board shows up. The first password typed on macOS needs Accessibility permission for `kchain-type` (System Settings → Privacy & Security → Accessibility).
+Keys follow a US keyboard layout, so a symbol lands where that layout puts it. The first time macOS sees the keyboard it may ask which key is next to Shift. Dismiss that, then a double tap types.
 
-The page and the typer share one serial port. While either has it, a double tap types on this computer.
+The host program opens the serial port for this page and for the extension. It does not type. The page can open the port itself instead. Either way, a double tap types through the keyboard.
 
 ## Chrome extension
 
-The extension fills website logins from the device and saves new ones when a login form is submitted. It talks to the USB typer on this computer. It does not keep a copy of the vault. Autofill works while the board is connected through the typer. Double-tap typing is unchanged.
+The extension fills website logins from the device and saves new ones when a login form is submitted. It talks to the host program on this computer. It does not keep a copy of the vault. Autofill works while that program has the board. A double tap types through the USB keyboard whenever the board is plugged in.
 
 ```bash
 cd extension
@@ -74,19 +74,19 @@ npm run build
 
 In Chrome, open `chrome://extensions`, turn on Developer mode, and choose Load unpacked. Select `extension/dist`.
 
-On macOS, install the native host once so the extension can start the typer:
+On macOS, install the native host once so the extension can start the host program:
 
 ```bash
 extension/native/install-mac.sh
 ```
 
-Run that from a terminal where `node` is the Node you use for this repo. If the native host is not installed, start the typer yourself with `cd host && npm start`, or open the web editor, which starts it.
+Run that from a terminal where `node` is the Node you use for this repo. If the native host is not installed, start the host program yourself with `cd host && npm start`, or open the web editor, which starts it.
 
 A key icon appears on a username, email, or password field. Click it to fill a matching website entry, or to generate a password. When that page is the active tab and the site has a saved login, a tap on the device wakes onto that login. If several logins match and a username or email is filled in, the tap uses that one. Otherwise it uses the first saved login for the site. Leaving the page clears the mark, and the next tap wakes onto entry 1. Submitting a login offers to save a new website entry, or to update one when the password changed. The toolbar popup lists logins for the current site. Open vault shows the same add, edit, and delete actions as the web editor, including generic and crypto entries.
 
 Chrome keeps saved passwords private from extensions. Import from Chrome, in the popup or the vault panel, opens Chrome's password settings so you can download the CSV, then imports the website logins that fit. The device holds 32 entries. A login already on the device is updated when its password differs. App logins, notes, and rows the device cannot type are skipped. Delete the CSV after importing. Chrome writes it as plain text.
 
-The extension id is fixed by the key in `extension/manifest.json`, and the typer only accepts that extension origin.
+The extension id is fixed by the key in `extension/manifest.json`, and the host program only accepts that extension origin.
 
 ## Serial protocol
 
@@ -107,8 +107,6 @@ USB serial is 115200 baud, one JSON object per line. The client sends `req` and 
 
 A missing `type` on add or edit is generic, so an older name-and-password command still works. Edit cannot change an entry’s type. A record already on flash with no `type` loads as generic.
 
-A successful reply includes the full vault. `selectedId` is JSON `null` when the vault is empty. `active` is whether the board is awake on an entry. `keyboardConnected` stays false, because this build has no Bluetooth keyboard. `usbTyping` is whether a USB heartbeat arrived in the last few seconds. A double tap types through USB only when `usbTyping` is true.
+A successful reply includes the full vault. `selectedId` is JSON `null` when the vault is empty. `active` is whether the board is awake on an entry. `keyboardConnected` stays false, because this build has no Bluetooth keyboard. `usbTyping` is whether the computer has configured the USB keyboard. A double tap types only when `usbTyping` is true.
 
-The device also emits events the client does not have to answer: `ready`, `selected`, `idle`, `typed`, `type_failed`, and `usb`. `selected` means the board is awake on that entry. `idle` means it has gone back to sleep.
-
-The editor, or the USB typer when it holds the port, sends `{"op":"usb_ready"}` about once a second. A double tap then sends `type_usb` with a `steps` array. A step of `"\t"` is the Tab key, and every other step is text. The computer answers `{"op":"type_ack","ok":true}` or `{"op":"type_ack","ok":false,"error":"..."}`. A body that only has `password` still types that string.
+The device also emits events the client does not have to answer: `ready`, `selected`, `idle`, `typed`, `type_failed`, and `usb`. `selected` means the board is awake on that entry. `idle` means it has gone back to sleep. `usb` reports the same keyboard state as `usbTyping`.

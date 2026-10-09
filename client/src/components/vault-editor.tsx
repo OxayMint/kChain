@@ -140,7 +140,7 @@ export function VaultEditor() {
           };
         });
       } catch {
-        // A later heartbeat or the next probe updates the same flag.
+        // A later usb event or the next probe updates the same flag.
       }
     }
     void refreshUsb();
@@ -352,7 +352,7 @@ export function VaultEditor() {
               entries.
             </p>
           </div>
-          <KeyboardStatus snapshot={snapshot} typer={typer} />
+          <KeyboardStatus snapshot={snapshot} />
         </header>
 
         <div className="mt-8 flex flex-1 flex-col gap-6" aria-live="polite">
@@ -372,7 +372,7 @@ export function VaultEditor() {
                 {typer === "waiting"
                   ? "Plug in the device. This page connects when it shows up."
                   : typer === "down"
-                    ? "Starting USB typing…"
+                    ? "Starting the connection…"
                     : "Connecting to the device…"}
               </p>
               <div className="mt-5 flex flex-col gap-2 sm:flex-row">
@@ -458,11 +458,12 @@ export function VaultEditor() {
                   <AlertDescription>{status.notice}</AlertDescription>
                 </Alert>
               )}
-              {status.phase === "ready" && !snapshot.usbTyping && typer === "down" && (
+              {status.phase === "ready" && !snapshot.usbTyping && (
                 <Alert>
-                  <AlertTitle>USB typing is not ready</AlertTitle>
+                  <AlertTitle>USB keyboard is not connected</AlertTitle>
                   <AlertDescription>
-                    Reload this page. It starts USB typing on this computer.
+                    Unplug the device and plug it in again. A double tap types
+                    once the computer has set it up as a keyboard.
                   </AlertDescription>
                 </Alert>
               )}
@@ -935,24 +936,14 @@ function Secret({
   );
 }
 
-function KeyboardStatus({
-  snapshot,
-  typer,
-}: {
-  snapshot: VaultSnapshot | null;
-  typer: UsbTyperStatus;
-}) {
+function KeyboardStatus({ snapshot }: { snapshot: VaultSnapshot | null }) {
   if (!snapshot) {
     return (
       <p className="text-sm text-muted-foreground sm:text-right">Not connected</p>
     );
   }
   const typing = snapshot.usbTyping;
-  const label = typing
-    ? "Types on this computer"
-    : typer === "down"
-      ? "USB typer is not running"
-      : "Waiting for the USB typer";
+  const label = typing ? "Types on this computer" : "USB keyboard is not connected";
   return (
     <p className="text-sm sm:max-w-56 sm:text-right">
       <span

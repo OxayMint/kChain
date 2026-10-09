@@ -1,14 +1,7 @@
-import { spawn } from "node:child_process";
-import { access, constants, stat } from "node:fs/promises";
 import http from "node:http";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { SerialPort } from "serialport";
 import { ReadlineParser } from "@serialport/parser-readline";
 
-const root = dirname(fileURLToPath(import.meta.url));
-const swiftSource = join(root, "type-keys.swift");
-const swiftBinary = join(root, "kchain-type");
 const portNumber = 4318;
 // Public key in extension/manifest.json. Unpacked installs keep this id.
 const extensionOrigin = "chrome-extension://akhgabpnnjnkhgpckaokepjcgdhiablm";
@@ -75,120 +68,6 @@ function writeLine(line) {
   return run;
 }
 
-function shorten(text) {
-  const oneLine = text.replace(/\s+/g, " ").trim();
-  if (!oneLine) return "The USB typer could not type.";
-  return oneLine.length > 90 ? oneLine.slice(0, 90) : oneLine;
-}
-
-function runProcess(command, args, input) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
-    let stderr = "";
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(shorten(stderr || `${command} exited ${code}`)));
-    });
-    if (input != null) child.stdin.end(input);
-    else child.stdin.end();
-  });
-}
-
-async function binaryIsCurrent() {
-  try {
-    await access(swiftBinary, constants.X_OK);
-    const [binary, source] = await Promise.all([stat(swiftBinary), stat(swiftSource)]);
-    return binary.mtimeMs >= source.mtimeMs;
-  } catch {
-    return false;
-  }
-}
-
-async function ensureTyper() {
-  if (process.platform !== "darwin") return;
-  if (await binaryIsCurrent()) return;
-  log("Compiling the keystroke helper.");
-  await runProcess("swiftc", ["-O", "-o", swiftBinary, swiftSource], null);
-}
-
-async function typeSteps(steps) {
-  if (process.platform === "darwin") {
-    await ensureTyper();
-    await runProcess(swiftBinary, [], JSON.stringify(steps));
-    return;
-  }
-  if (process.platform === "linux") {
-    await typeLinux(steps);
-    return;
-  }
-  if (process.platform === "win32") {
-    await typeWindows(steps);
-    return;
-  }
-  throw new Error("This operating system cannot type from the USB typer.");
-}
-
-async function typeLinux(steps) {
-  const wayland = Boolean(process.env.WAYLAND_DISPLAY);
-  const command = wayland ? "wtype" : "xdotool";
-  for (const step of steps) {
-    if (step.length === 0) continue;
-    const args =
-      step === "\t"
-        ? wayland
-          ? ["-k", "tab"]
-          : ["key", "Tab"]
-        : wayland
-          ? [step]
-          : ["type", "--delay", "10", "--", step];
-    await runProcess(command, args, null);
-  }
-}
-
-function sendKeysSteps(steps) {
-  return steps
-    .map((step) => (step === "\t" ? "{TAB}" : step.replace(/([+^%~(){}\[\]])/g, "{$1}")))
-    .join("");
-}
-
-function typeWindows(steps) {
-  const script = `
-$raw = [Console]::In.ReadToEnd()
-Add-Type -AssemblyName System.Windows.Forms
-[System.Windows.Forms.SendKeys]::SendWait($raw)
-`;
-  return runProcess(
-    "powershell.exe",
-    ["-NoProfile", "-NonInteractive", "-Command", script],
-    sendKeysSteps(steps),
-  );
-}
-
-function stepsFrom(parsed) {
-  if (parsed && Array.isArray(parsed.steps)) {
-    if (parsed.steps.length === 0 || parsed.steps.length > 8) {
-      return { error: "Missing text to type." };
-    }
-    const steps = [];
-    for (const step of parsed.steps) {
-      if (typeof step !== "string") return { error: "Missing text to type." };
-      if (step !== "\t" && step.length > 256) return { error: "Text is too long." };
-      steps.push(step);
-    }
-    if (steps.every((step) => step.length === 0)) return { error: "Missing text to type." };
-    return { steps };
-  }
-  if (parsed && typeof parsed.password === "string" && parsed.password.length > 0) {
-    if (parsed.password.length > 128) return { error: "Password is too long." };
-    return { steps: [parsed.password] };
-  }
-  return { error: "Missing password." };
-}
-
 async function onDeviceLine(line) {
   const trimmed = line.replace(/\r$/, "");
   if (!trimmed) return;
@@ -197,33 +76,6 @@ async function onDeviceLine(line) {
     message = JSON.parse(trimmed);
   } catch {
     forward(trimmed);
-    return;
-  }
-  if (message && message.event === "type_usb") {
-    const name = typeof message.name === "string" ? message.name : "entry";
-    const typing = stepsFrom(message);
-    if (typing.error) {
-      log(typing.error);
-      try {
-        await writeLine(JSON.stringify({ op: "type_ack", ok: false, error: typing.error }));
-      } catch {
-        // The cable dropped while reporting the failure.
-      }
-      return;
-    }
-    log(`Typing ${name}.`);
-    try {
-      await typeSteps(typing.steps);
-      await writeLine(JSON.stringify({ op: "type_ack", ok: true }));
-    } catch (error) {
-      const text = error instanceof Error ? error.message : "Could not type.";
-      log(text);
-      try {
-        await writeLine(JSON.stringify({ op: "type_ack", ok: false, error: shorten(text) }));
-      } catch {
-        // The cable dropped while reporting the failure.
-      }
-    }
     return;
   }
   if (message && typeof message.ok === "boolean" && typeof message.req === "number") {
@@ -362,13 +214,7 @@ async function session(path) {
   parser.on("data", (line) => {
     void onDeviceLine(String(line));
   });
-  const heartbeat = setInterval(() => {
-    void writeLine(JSON.stringify({ op: "usb_ready" })).catch(() => {});
-  }, 1000);
-  heartbeat.unref();
-  await writeLine(JSON.stringify({ op: "usb_ready" }));
   await holdPort(port);
-  clearInterval(heartbeat);
   deviceOpen = false;
   activePort = null;
   failCommands("The board is not open.");
@@ -407,33 +253,7 @@ function startServer() {
     const url = new URL(req.url || "/", "http://127.0.0.1");
     if (req.method === "GET" && url.pathname === "/health") {
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-      res.end(JSON.stringify({ ok: true, device: deviceOpen, typing: true }));
-      return;
-    }
-    if (req.method === "POST" && url.pathname === "/type") {
-      void (async () => {
-        try {
-          const body = (await readBody(req)).trim();
-          const parsed = JSON.parse(body);
-          const typing = stepsFrom(parsed);
-          if (typing.error) {
-            res.writeHead(400);
-            res.end(typing.error);
-            return;
-          }
-          log("Typing from the editor.");
-          await typeSteps(typing.steps);
-          res.writeHead(204);
-          res.end();
-        } catch (error) {
-          if (!res.headersSent) {
-            const text = error instanceof Error ? shorten(error.message) : "Could not type.";
-            log(text);
-            res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
-            res.end(text);
-          }
-        }
-      })();
+      res.end(JSON.stringify({ ok: true, device: deviceOpen }));
       return;
     }
     if (req.method === "GET" && url.pathname === "/events") {
@@ -504,11 +324,11 @@ function startServer() {
     res.end();
   });
   server.listen(portNumber, "127.0.0.1", () => {
-    log(`USB typer listening on 127.0.0.1:${portNumber}.`);
+    log(`Listening on 127.0.0.1:${portNumber}.`);
   });
   server.on("error", (error) => {
     if (error && error.code === "EADDRINUSE") {
-      console.error("The USB typer is already running.");
+      console.error("The host program is already running.");
     } else {
       console.error(error instanceof Error ? error.message : "Could not listen.");
     }
@@ -518,18 +338,6 @@ function startServer() {
 }
 
 async function main() {
-  if (process.platform === "darwin") {
-    try {
-      await ensureTyper();
-    } catch (error) {
-      log(error instanceof Error ? error.message : "Could not compile the keystroke helper.");
-    }
-    try {
-      await runProcess(swiftBinary, ["--check"], null);
-    } catch {
-      log("macOS will ask for Accessibility access the first time a password is typed.");
-    }
-  }
   const server = startServer();
   let announcedWait = false;
   let announcedBusy = false;
@@ -552,7 +360,7 @@ async function main() {
       const text = error instanceof Error ? error.message : "Serial port failed.";
       if (portIsBusy(text)) {
         if (!announcedBusy) {
-          log("The editor has the serial port. A double tap will type through this program.");
+          log("The editor has the serial port.");
           announcedBusy = true;
           announcedWait = false;
         }
@@ -573,6 +381,6 @@ process.on("SIGINT", () => {
 });
 
 main().catch((error) => {
-  console.error(error instanceof Error ? error.message : "The USB typer stopped.");
+  console.error(error instanceof Error ? error.message : "The host program stopped.");
   process.exit(1);
 });

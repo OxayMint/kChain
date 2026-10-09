@@ -3,27 +3,23 @@
 #include "vault.h"
 
 // USB serial (native CDC) line protocol. One JSON object per line.
-// Commands: list, add, edit, delete, focus, usb_ready, type_ack.
+// Commands: list, add, edit, delete, focus.
 // focus marks which entry a tap from idle wakes onto. It does not move
 // the selection by itself. A null id clears that mark.
 // Events are unsolicited and have no "ok".
 //
-// The ESP32-C3 USB port is serial, not a keyboard. When the USB typer has the
-// port open it sends usb_ready, and a double tap asks it to type. This build
-// has no Bluetooth keyboard.
+// Typing is the USB keyboard on this port, not a command. usbTyping is
+// whether the computer has configured that keyboard. This build has no
+// Bluetooth keyboard.
 class SerialLink {
  public:
   void poll(Vault& vault);
 
   void setActive(bool active) { active_ = active; }
+  void setUsbTyping(bool ready) { usbTyping_ = ready; }
 
-  bool usbTypingReady() const;
-  // True once, when the USB typer becomes ready or goes quiet.
+  // True once, when the USB keyboard becomes ready or goes away.
   bool consumeUsbChange(bool& ready);
-  // Sends type_usb and waits for type_ack. error is set when this returns false.
-  // tick runs on each wait so the screen can move while loop() is blocked.
-  // It may be null.
-  bool requestUsbType(const VaultEntry& entry, Vault& vault, const char*& error, void (*tick)() = nullptr);
 
   void emitReady(const Vault& vault);
   void emitSelected(const Vault& vault);
@@ -35,18 +31,11 @@ class SerialLink {
  private:
   char line_[1024] = {};
   bool active_ = false;
+  bool usbTyping_ = false;
+  bool usbReported_ = false;
   size_t length_ = 0;
   bool discarding_ = false;
-  bool typeAckPending_ = false;
-  bool typeAckGot_ = false;
-  bool typeAckOk_ = false;
-  char typeError_[96] = {};
-  bool usbSeen_ = false;
-  bool usbReported_ = false;
-  unsigned long lastUsbReadyMs_ = 0;
 
-  void noteUsbReady();
-  bool usbReadyNow() const;
   void handleLine(const char* line, Vault& vault);
   void sendSnapshot(const char* op, bool ok, const char* error, const Vault& vault, uint32_t req,
                     bool hasReq, uint32_t createdId, bool hasCreatedId);

@@ -22,7 +22,7 @@ chmod +x "$launcher"
 cat > "${dest}/com.kchain.usb.json" <<EOF
 {
   "name": "com.kchain.usb",
-  "description": "kChain USB typer",
+  "description": "Connects Chrome to the kChain device",
   "path": "${launcher}",
   "type": "stdio",
   "allowed_origins": [

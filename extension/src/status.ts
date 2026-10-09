@@ -17,7 +17,7 @@ export function selectionLine(snapshot: VaultSnapshot): string {
 
 export function typingLine(snapshot: VaultSnapshot | null): string | null {
   if (!snapshot) return null;
-  return snapshot.usbTyping ? "Types on this computer" : "Waiting for the USB typer";
+  return snapshot.usbTyping ? "Types on this computer" : "USB keyboard is not connected";
 }
 
 export function pageHost(url: string | undefined): string | null {

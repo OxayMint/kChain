@@ -25,22 +25,6 @@ void writeEntry(JsonObject object, const VaultEntry& entry) {
   if (entry.type == EntryType::Crypto) object["phrase"] = entry.phrase;
 }
 
-void addTypeSteps(JsonArray steps, const VaultEntry& entry) {
-  switch (entry.type) {
-    case EntryType::Website:
-      steps.add(entry.username);
-      steps.add("\t");
-      steps.add(entry.password);
-      break;
-    case EntryType::Crypto:
-      steps.add(entry.phrase);
-      break;
-    case EntryType::Generic:
-      steps.add(entry.password);
-      break;
-  }
-}
-
 bool textField(const JsonDocument& in, const char* key, const char*& out, const char*& error) {
   if (in[key].isUnbound()) {
     out = "";
@@ -69,59 +53,10 @@ bool commandType(const JsonDocument& in, EntryType& type, const char*& error) {
 
 }  // namespace
 
-void SerialLink::noteUsbReady() {
-  lastUsbReadyMs_ = millis();
-  usbSeen_ = true;
-}
-
-bool SerialLink::usbReadyNow() const {
-  if (!usbSeen_) return false;
-  return millis() - lastUsbReadyMs_ < USB_READY_MS;
-}
-
-bool SerialLink::usbTypingReady() const { return usbReadyNow(); }
-
 bool SerialLink::consumeUsbChange(bool& ready) {
-  const bool now = usbReadyNow();
-  if (now == usbReported_) return false;
-  usbReported_ = now;
-  ready = now;
-  return true;
-}
-
-bool SerialLink::requestUsbType(const VaultEntry& entry, Vault& vault, const char*& error,
-                                void (*tick)()) {
-  typeAckPending_ = true;
-  typeAckGot_ = false;
-  typeAckOk_ = false;
-  typeError_[0] = '\0';
-
-  JsonDocument doc;
-  doc["event"] = "type_usb";
-  doc["id"] = entry.id;
-  doc["name"] = entry.name;
-  doc["type"] = entryTypeName(entry.type);
-  addTypeSteps(doc["steps"].to<JsonArray>(), entry);
-  writeJson(doc);
-  Serial.flush();
-
-  const unsigned long start = millis();
-  while (millis() - start < USB_TYPE_ACK_MS) {
-    poll(vault);
-    if (tick != nullptr) tick();
-    if (typeAckGot_) break;
-    delay(LOOP_POLL_MS);
-  }
-  typeAckPending_ = false;
-
-  if (!typeAckGot_) {
-    error = "The USB typer did not answer.";
-    return false;
-  }
-  if (!typeAckOk_) {
-    error = typeError_[0] == '\0' ? "The USB typer could not type." : typeError_;
-    return false;
-  }
+  if (usbTyping_ == usbReported_) return false;
+  usbReported_ = usbTyping_;
+  ready = usbTyping_;
   return true;
 }
 
@@ -179,7 +114,7 @@ void SerialLink::sendSnapshot(const char* op, bool ok, const char* error, const 
   // This build has no Bluetooth keyboard. The field stays so older editors
   // still parse the snapshot.
   doc["keyboardConnected"] = false;
-  doc["usbTyping"] = usbReadyNow();
+  doc["usbTyping"] = usbTyping_;
   writeJson(doc);
 }
 
@@ -205,27 +140,9 @@ void SerialLink::handleLine(const char* line, Vault& vault) {
     return;
   }
 
-  if (strcmp(op, "usb_ready") == 0) {
-    noteUsbReady();
-    return;
-  }
-
-  if (strcmp(op, "type_ack") == 0) {
-    if (!typeAckPending_) return;
-    typeAckGot_ = true;
-    typeAckOk_ = !in["ok"].is<bool>() || in["ok"].as<bool>();
-    typeError_[0] = '\0';
-    if (in["error"].is<const char*>()) {
-      const char* message = in["error"].as<const char*>();
-      size_t i = 0;
-      while (message[i] != '\0' && i + 1 < sizeof(typeError_)) {
-        typeError_[i] = message[i];
-        i++;
-      }
-      typeError_[i] = '\0';
-    }
-    return;
-  }
+  // Older hosts sent these while a program on the computer typed. The
+  // keyboard types now, so a leftover heartbeat is not an error.
+  if (strcmp(op, "usb_ready") == 0 || strcmp(op, "type_ack") == 0) return;
 
   if (strcmp(op, "focus") == 0) {
     uint32_t id = 0;
@@ -312,7 +229,7 @@ void SerialLink::emitReady(const Vault& vault) {
   doc["event"] = "ready";
   doc["version"] = PROTOCOL_VERSION;
   doc["keyboardConnected"] = false;
-  doc["usbTyping"] = usbReadyNow();
+  doc["usbTyping"] = usbTyping_;
   doc["active"] = active_;
   if (!vault.mutableOk()) doc["error"] = vault.loadError();
   else if (vault.selectedId() == 0) doc["selectedId"] = nullptr;

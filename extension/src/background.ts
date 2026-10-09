@@ -181,7 +181,7 @@ async function readStatus(): Promise<StatusResponse> {
     return {
       phase,
       snapshot: null,
-      message: "The USB typer is not running. Run npm start in host/, or open the web editor.",
+      message: "The host program is not running. Run npm start in host/, or open the web editor.",
     };
   }
   if (phase === "waiting") {
@@ -258,7 +258,7 @@ async function deviceCommand(command: DeviceCommand): Promise<DeviceResponse> {
       body: JSON.stringify(command),
     });
   } catch {
-    throw new Error("The USB typer is not running.");
+    throw new Error("The host program is not running.");
   }
   if (response.status === 503) throw new Error("Plug in the device.");
   if (!response.ok) {

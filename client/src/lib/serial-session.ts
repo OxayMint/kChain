@@ -1,7 +1,6 @@
 import {
   ESPRESSIF_USB_VENDOR_ID,
   parseDeviceMessage,
-  USB_TYPER_URL,
   type DeviceCommand,
   type DeviceEvent,
   type DeviceResponse,
@@ -46,7 +45,6 @@ export class SerialVault {
   private waiter: Waiter | null = null;
   private closed = false;
   private writeChain: Promise<void> = Promise.resolve();
-  private usbTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     private readonly onEvent: (event: DeviceEvent) => void,
@@ -78,7 +76,6 @@ export class SerialVault {
     this.reader = port.readable.getReader();
     this.writer = port.writable.getWriter();
     void this.readLoop();
-    void this.watchTyper();
   }
 
   async request(command: DeviceCommand, timeoutMs = 3000): Promise<DeviceResponse> {
@@ -116,10 +113,6 @@ export class SerialVault {
   private async shutdown(message: string | null): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    if (this.usbTimer) {
-      clearInterval(this.usbTimer);
-      this.usbTimer = null;
-    }
     if (this.waiter) {
       clearTimeout(this.waiter.timer);
       const waiter = this.waiter;
@@ -191,60 +184,7 @@ export class SerialVault {
     return run;
   }
 
-  private async watchTyper(): Promise<void> {
-    while (!this.closed) {
-      if (await typerIsUp()) {
-        try {
-          await this.writeRaw('{"op":"usb_ready"}');
-        } catch {
-          return;
-        }
-        if (this.closed || this.usbTimer) return;
-        this.usbTimer = setInterval(() => {
-          void this.writeRaw('{"op":"usb_ready"}').catch(() => {});
-        }, 1000);
-        return;
-      }
-      await delay(1000);
-    }
-  }
-
-  private async answerTypeUsb(steps: string[]): Promise<void> {
-    try {
-      const response = await fetch(`${USB_TYPER_URL}/type`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ steps }),
-      });
-      if (!response.ok) {
-        const text = (await response.text()).replace(/\s+/g, " ").trim();
-        const error = text.slice(0, 90) || "The USB typer could not type.";
-        await this.writeRaw(JSON.stringify({ op: "type_ack", ok: false, error }));
-        return;
-      }
-      await this.writeRaw(JSON.stringify({ op: "type_ack", ok: true }));
-    } catch {
-      await this.writeRaw(
-        JSON.stringify({
-          op: "type_ack",
-          ok: false,
-          error: "The USB typer is not running.",
-        }),
-      );
-    }
-  }
-
   private dispatch(line: string): void {
-    const typing = typeUsbSteps(line);
-    if (typing) {
-      if ("steps" in typing) void this.answerTypeUsb(typing.steps);
-      else {
-        void this.writeRaw(
-          JSON.stringify({ op: "type_ack", ok: false, error: typing.error }),
-        );
-      }
-      return;
-    }
     const message = parseDeviceMessage(line);
     if (!message) return;
     if ("ok" in message) {
@@ -261,37 +201,6 @@ export class SerialVault {
       return;
     }
     this.onEvent(message);
-  }
-}
-
-function typeUsbSteps(line: string): { steps: string[] } | { error: string } | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(line);
-  } catch {
-    return null;
-  }
-  if (!parsed || typeof parsed !== "object") return null;
-  const record = parsed as Record<string, unknown>;
-  if (record.event !== "type_usb") return null;
-  if (Array.isArray(record.steps) && record.steps.length > 0) {
-    if (record.steps.every((step) => typeof step === "string")) {
-      return { steps: record.steps };
-    }
-    return { error: "The device sent an unexpected type request." };
-  }
-  if (typeof record.password === "string" && record.password.length > 0) {
-    return { steps: [record.password] };
-  }
-  return { error: "The device sent an unexpected type request." };
-}
-
-async function typerIsUp(): Promise<boolean> {
-  try {
-    const response = await fetch(`${USB_TYPER_URL}/health`, { cache: "no-store" });
-    return response.ok;
-  } catch {
-    return false;
   }
 }
 

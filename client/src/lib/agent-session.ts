@@ -30,8 +30,8 @@ export async function usbTyperStatus(): Promise<UsbTyperStatus> {
   }
 }
 
-// Talks to the USB typer on this computer. The typer owns the serial port
-// and types passwords on a double tap.
+// Talks to the host program on this computer. That program owns the serial
+// port. The device itself types, as a USB keyboard.
 export class AgentVault implements VaultSession {
   private events: EventSource | null = null;
   private waiter: Waiter | null = null;
@@ -45,9 +45,9 @@ export class AgentVault implements VaultSession {
 
   async connect(): Promise<void> {
     const status = await usbTyperStatus();
-    if (status === "down") throw new Error("The USB typer is not running.");
+    if (status === "down") throw new Error("The host program is not running.");
     if (status === "waiting") {
-      throw new Error("The USB typer is waiting for the board.");
+      throw new Error("The host program is waiting for the board.");
     }
     await new Promise<void>((resolve, reject) => {
       const events = new EventSource(`${USB_TYPER_URL}/events`);
@@ -60,10 +60,10 @@ export class AgentVault implements VaultSession {
       events.onerror = () => {
         if (!opened) {
           events.close();
-          reject(new Error("Could not reach the USB typer."));
+          reject(new Error("Could not reach the host program."));
           return;
         }
-        void this.shutdown("The USB typer stopped.");
+        void this.shutdown("The host program stopped.");
       };
       events.onmessage = (message) => {
         if (message.data.trim()) this.dispatch(message.data);
@@ -73,7 +73,7 @@ export class AgentVault implements VaultSession {
 
   async request(command: DeviceCommand, timeoutMs = 3000): Promise<DeviceResponse> {
     if (this.closed || !this.events) {
-      throw new Error("The USB typer is not connected.");
+      throw new Error("The host program is not connected.");
     }
     if (this.waiter) throw new Error("Another command is still running.");
     const req = ++this.nextReq;
@@ -83,10 +83,10 @@ export class AgentVault implements VaultSession {
       body: JSON.stringify({ ...command, req }),
     });
     if (response.status === 503) {
-      throw new Error("The USB typer is waiting for the board.");
+      throw new Error("The host program is waiting for the board.");
     }
     if (!response.ok) {
-      throw new Error("The USB typer did not accept the command.");
+      throw new Error("The host program did not accept the command.");
     }
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -111,7 +111,7 @@ export class AgentVault implements VaultSession {
       clearTimeout(this.waiter.timer);
       const waiter = this.waiter;
       this.waiter = null;
-      waiter.reject(new Error(message ?? "The USB typer stopped."));
+      waiter.reject(new Error(message ?? "The host program stopped."));
     }
     if (message) this.onDisconnect(message);
   }

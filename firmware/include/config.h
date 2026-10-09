@@ -33,7 +33,7 @@
 //
 // Leave these alone:
 //   GPIO 0, 45, 46  strapping. Not on this header.
-//   GPIO 19, 20     native USB. USB serial uses that port, not RX and TX.
+//   GPIO 19, 20     native USB. Serial and the keyboard share that port, not RX and TX.
 //   GPIO 26-32      SPI flash. Not on the header.
 //   RX, TX          UART, GPIO 44 and GPIO 43. Kept free.
 //   5V, GND, 3V     power only. Do not use them as signals.
@@ -83,12 +83,9 @@ static constexpr unsigned long LOOP_POLL_MS = 10;
 // 240 MHz is the Arduino default on this chip. Button and USB do not need it.
 static constexpr uint32_t CPU_MHZ = 80;
 
-// Typing waits this long for the USB typer to finish the password.
-// 128 characters at the host's per-key delay fits inside it.
-static constexpr unsigned long USB_TYPE_ACK_MS = 5000;
-// The USB typer refreshes faster than this. When the refreshes stop, the
-// cable is no longer the path that types.
-static constexpr unsigned long USB_READY_MS = 3000;
+// How long a HID key stays down, and how long it stays up, before the next
+// one. A back-to-back report can leave the computer on the key-down only.
+static constexpr unsigned long USB_KEY_GAP_MS = 12;
 
 static constexpr int VAULT_MAX_ENTRIES = 32;
 static constexpr size_t VAULT_NAME_MAX = 48;
@@ -131,6 +128,7 @@ static_assert(BUTTON_DOUBLE_TAP_MS > BUTTON_DEBOUNCE_MS, "double tap must outlas
 static_assert(BUTTON_HOLD_MS > BUTTON_DOUBLE_TAP_MS, "hold must outlast a double tap");
 static_assert(SEARCH_EDIT_ARM_MS > 0 && SEARCH_EDIT_ARM_MS < BUTTON_HOLD_MS,
               "search edit must arm after a click and before a hold");
+static_assert(USB_KEY_GAP_MS > 0, "a key needs time down and up");
 static_assert(SEARCH_BLINK_MS > 0, "a blink needs a period");
 static_assert(SEARCH_QUERY_MAX >= 1, "a search needs room for one letter");
 static_assert(VAULT_HOSTNAME_MAX >= VAULT_NAME_MAX, "a hostname needs at least a name's room");
