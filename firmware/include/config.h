@@ -25,7 +25,8 @@
 // GPIO 1, SDA (MOSI) is GPIO 2, RST is GPIO 3, DC is GPIO 4, CS is GPIO 5,
 // and BL is GPIO 6. BL driven high turns the backlight on. GPIO 3 is a
 // strapping pin; holding reset high after boot is that strap's idle level.
-// The glass shows the menu: kChain at the top left, and a blue highlight.
+// The glass shows the menu: kChain at the top left, and a gold outline on
+// the selected row.
 //
 // Leave these alone:
 //   GPIO 0, 45, 46  strapping. Not on this header.
@@ -59,8 +60,9 @@ static constexpr unsigned long BUTTON_DOUBLE_TAP_MS = 500;
 // that. It stays a click that can pair with a second click into a double
 // tap. Search edit starts once the button has been down this long.
 static constexpr unsigned long SEARCH_EDIT_ARM_MS = 200;
-// Active mode ends this long after the button is released, if it is not
-// pressed again. A hold keeps the board active.
+// The panel enters sleep this long after the button is released and the
+// wheel stays still. The editor hears idle at the same moment. A hold keeps
+// the glass awake. The press or turn that leaves sleep only wakes it.
 static constexpr unsigned long ACTIVE_IDLE_MS = 5000;
 // One step of the exit animation. The left edge opens, the selected name
 // slides through, and the edge closes.
@@ -83,7 +85,9 @@ static constexpr uint32_t CPU_MHZ = 80;
 // one. A back-to-back report can leave the computer on the key-down only.
 static constexpr unsigned long USB_KEY_GAP_MS = 12;
 
-static constexpr int VAULT_MAX_ENTRIES = 32;
+// Upper 2 MB filesystem. A largest website entry is about 580 bytes on
+// disk, so 2048 of those fit with room left for the filesystem itself.
+static constexpr int VAULT_MAX_ENTRIES = 2048;
 static constexpr size_t VAULT_NAME_MAX = 48;
 static constexpr size_t VAULT_HOSTNAME_MAX = 253;
 static constexpr size_t VAULT_USERNAME_MAX = 128;

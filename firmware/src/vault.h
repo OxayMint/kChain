@@ -3,8 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <deque>
 #include <string>
-#include <vector>
 
 enum class EntryType : uint8_t { Generic, Website, Crypto };
 
@@ -25,8 +25,9 @@ const char* entryTypeName(EntryType type);
 // False when text is not generic, website, or crypto.
 bool entryTypeFrom(const char* text, EntryType& type);
 
-// Plaintext vault in NVS (device flash). No PIN and no encryption.
-// A missing vault is empty and valid. A stored entry with no type is generic.
+// Plaintext vault in a file on the upper 2 MB of flash. No PIN and no
+// encryption. A missing file is empty and valid. A stored entry with no
+// type is generic. A vault left in NVS by older firmware is copied once.
 class Vault {
  public:
   // Loads flash. Returns false when flash cannot be read; entries stay empty
@@ -60,11 +61,10 @@ class Vault {
             const char* password, const char* phrase, const char*& error);
   bool remove(uint32_t id, const char*& error);
 
-  const std::vector<VaultEntry>& entries() const { return entries_; }
+  const std::deque<VaultEntry>& entries() const { return entries_; }
 
  private:
-  std::vector<VaultEntry> entries_;
-  std::vector<uint32_t> persistedIds_;
+  std::deque<VaultEntry> entries_;
   uint32_t nextId_;
   uint32_t focusId_;
   int selected_;
@@ -72,6 +72,7 @@ class Vault {
   const char* loadError_;
 
   bool load();
+  bool loadFile(const char* path);
   bool save();
   int indexOf(uint32_t id) const;
 };

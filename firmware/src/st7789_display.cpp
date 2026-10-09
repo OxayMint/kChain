@@ -14,9 +14,11 @@ constexpr uint32_t kSpiHz = 10000000;
 const SPISettings kSpi(kSpiHz, MSBFIRST, SPI_MODE0);
 
 constexpr uint8_t kSwReset = 0x01;
+constexpr uint8_t kSleepIn = 0x10;
 constexpr uint8_t kSleepOut = 0x11;
 constexpr uint8_t kNormalOn = 0x13;
 constexpr uint8_t kInvertOn = 0x21;
+constexpr uint8_t kDisplayOff = 0x28;
 constexpr uint8_t kDisplayOn = 0x29;
 constexpr uint8_t kColumn = 0x2A;
 constexpr uint8_t kRow = 0x2B;
@@ -38,7 +40,7 @@ constexpr uint8_t kGammaP = 0xE0;
 constexpr uint8_t kGammaN = 0xE1;
 
 // Portrait. This glass is BGR: bit 3 swaps red and blue. Without it the
-// blue highlight is drawn orange.
+// gold highlight is drawn blue.
 constexpr uint8_t kPortrait = 0x08;
 
 constexpr uint16_t kRed = 0xF800;
@@ -198,6 +200,23 @@ bool St7789Display::begin() {
   return true;
 }
 
+void St7789Display::sleep() {
+  // Blank the panel before the scan stops, so the last frame is not left
+  // biased on the glass. Sleep in then stops the oscillator and the drivers.
+  command(kDisplayOff);
+  delay(20);
+  command(kSleepIn);
+  delay(5);
+  digitalWrite(PIN_TFT_BL, LOW);
+}
+
+void St7789Display::wake() {
+  command(kSleepOut);
+  delay(120);
+  command(kDisplayOn);
+  digitalWrite(PIN_TFT_BL, HIGH);
+}
+
 void St7789Display::fillRect(int x, int y, int w, int h, uint16_t color) {
   if (w <= 0 || h <= 0) return;
   if (x < 0) {
@@ -220,7 +239,7 @@ void St7789Display::fillRect(int x, int y, int w, int h, uint16_t color) {
 }
 
 void St7789Display::fillRoundRect(int x, int y, int w, int h, int radius, uint16_t fill,
-                                  uint16_t border, uint16_t outside) {
+                                  uint16_t border, uint16_t outside, int borderWidth) {
   if (w <= 0 || h <= 0) return;
   const int x0 = x < 0 ? 0 : x;
   const int y0 = y < 0 ? 0 : y;
@@ -228,18 +247,21 @@ void St7789Display::fillRoundRect(int x, int y, int w, int h, int radius, uint16
   const int y1 = y + h > kHeight ? kHeight : y + h;
   if (x0 >= x1 || y0 >= y1) return;
   if (radius < 0) radius = 0;
+  if (borderWidth < 1) borderWidth = 1;
 
   const int rowW = x1 - x0;
   if (!beginPixels(x0, y0, rowW, y1 - y0)) return;
-  const int innerR = radius > 0 ? radius - 1 : 0;
+  const int innerR = radius >= borderWidth ? radius - borderWidth : 0;
+  const int inset = borderWidth;
   for (int py = y0; py < y1; ++py) {
     for (int i = 0; i < rowW; ++i) {
       const int lx = x0 + i - x;
       const int ly = py - y;
       uint16_t color = outside;
       if (roundContains(lx, ly, w, h, radius)) {
-        const bool core =
-            w > 2 && h > 2 && roundContains(lx - 1, ly - 1, w - 2, h - 2, innerR);
+        const bool core = w > inset * 2 && h > inset * 2 &&
+                          roundContains(lx - inset, ly - inset, w - inset * 2, h - inset * 2,
+                                        innerR);
         color = core ? fill : border;
       }
       putPixel(row(), i, color);
@@ -285,16 +307,24 @@ void St7789Display::text(int x, int y, const char* text, const UiFont& font, uin
     for (const char* cursor = text; *cursor != '\0'; ++cursor) {
       const UiGlyph& glyph = uiGlyph(font, static_cast<unsigned char>(*cursor));
       if (glyph.width > 0) {
-        const int stride = (glyph.width + 7) / 8;
+        const int stride = (glyph.width + 1) / 2;
         // Packed rows start at the bottom of the glyph.
         const int srcRow = height - 1 - row;
         const uint8_t* bits = font.bits + glyph.offset + srcRow * stride;
         const int origin = pen + glyph.left;
+        uint8_t* dest = this->row();
         for (int col = 0; col < glyph.width; ++col) {
-          if ((bits[col >> 3] & static_cast<uint8_t>(0x80 >> (col & 7))) == 0) continue;
+          const uint8_t byte = bits[col >> 1];
+          const uint8_t coverage = (col & 1) == 0 ? uint8_t(byte >> 4) : uint8_t(byte & 0x0F);
+          if (coverage == 0) continue;
           const int px = origin + col - srcSkip;
           if (px < 0 || px >= boxW) continue;
-          putPixel(this->row(), px, ink);
+          if (coverage == 15) {
+            putPixel(dest, px, ink);
+            continue;
+          }
+          const uint16_t under = (uint16_t(dest[px * 2]) << 8) | dest[px * 2 + 1];
+          putPixel(dest, px, uiBlend(ink, under, coverage));
         }
       }
       pen += glyph.advance;

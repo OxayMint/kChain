@@ -42,14 +42,14 @@ bool Menu::nameMatches(const std::string& name) const {
   return true;
 }
 
-int Menu::matchingSlots(const Vault& vault, int* slots, int cap) const {
-  int count = 0;
+int Menu::matchingSlots(const Vault& vault, std::vector<int>& slots) const {
+  slots.clear();
   const int total = vault.selectableCount();
-  for (int i = 0; i < total && count < cap; i++) {
+  for (int i = 0; i < total; i++) {
     const VaultEntry* entry = vault.at(i);
-    if (entry != nullptr && nameMatches(entry->name)) slots[count++] = i;
+    if (entry != nullptr && nameMatches(entry->name)) slots.push_back(i);
   }
-  return count;
+  return static_cast<int>(slots.size());
 }
 
 void Menu::applySymbolStep(int step) {
@@ -110,8 +110,8 @@ void Menu::placeRow(int row, const Vault& vault, int slot, int selected) {
 void Menu::fillRows(const Vault& vault) {
   clearRows();
   label_[0] = '\0';
-  int slots[VAULT_MAX_ENTRIES];
-  const int matchCount = matchingSlots(vault, slots, VAULT_MAX_ENTRIES);
+  std::vector<int> slots;
+  const int matchCount = matchingSlots(vault, slots);
   if (matchCount == 0) {
     notFound_ = true;
     return;
@@ -150,8 +150,8 @@ bool Menu::onWheel(Vault& vault, int delta) {
 
   const int count = vault.selectableCount();
   if (count <= 0) return false;
-  int matches[VAULT_MAX_ENTRIES];
-  const int matchCount = matchingSlots(vault, matches, VAULT_MAX_ENTRIES);
+  std::vector<int> matches;
+  const int matchCount = matchingSlots(vault, matches);
   if (matchCount == 0) return false;
 
   const int index = vault.selectedIndex();

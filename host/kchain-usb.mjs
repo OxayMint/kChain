@@ -204,8 +204,11 @@ async function session(path) {
   deviceOpen = true;
   writeChain = Promise.resolve();
   try {
+    // macOS does not deliver TX to this USB device while DTR is low, so a
+    // list command would sit unread. RTS stays low: raising both lines is
+    // the ESP32-S3 bootloader sequence.
     await new Promise((resolve) => {
-      port.set({ dtr: false, rts: false }, () => resolve());
+      port.set({ dtr: true, rts: false }, () => resolve());
     });
   } catch {
     // Some USB serial adapters reject line-state changes. The port is still open.

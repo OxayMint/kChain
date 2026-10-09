@@ -6,15 +6,16 @@
 
 namespace {
 
-// RGB565 approximations of the dark list: background #080F14, surface
-// #12161C, border #2A313D, primary #3B82F6, secondary #A1A7B7, muted #6B7280.
-constexpr uint16_t kBg = 0x0862;
-constexpr uint16_t kSurface = 0x10A3;
-constexpr uint16_t kBorder = 0x2987;
-constexpr uint16_t kPrimary = 0x3C1E;
-constexpr uint16_t kText = 0xFFFF;
-constexpr uint16_t kSecondary = 0xA536;
-constexpr uint16_t kMuted = 0x6B90;
+// RGB565 of the client palette. Background oklch(0.17 0.015 70),
+// card oklch(0.22 0.016 70), foreground oklch(0.96 0.02 90),
+// primary oklch(0.82 0.13 82), muted text oklch(0.75 0.02 85).
+// The hairline is the client's border, foreground at 14% over the background.
+constexpr uint16_t kBg = 0x1061;
+constexpr uint16_t kSurface = 0x18C2;
+constexpr uint16_t kBorder = 0x3164;
+constexpr uint16_t kPrimary = 0xEDCB;
+constexpr uint16_t kText = 0xF79C;
+constexpr uint16_t kMuted = 0xB574;
 
 // 16x16, MSB left.
 constexpr uint8_t kLock[] = {
@@ -80,8 +81,10 @@ void fitText(char* out, size_t outSize, const char* text, const UiFont& font, in
   out[n] = '\0';
 }
 
-void drawTitle(St7789Display& display) {
-  display.text(kUiMargin, kUiHeaderY, "kChain", kUiFont20, kText, kBg);
+void drawChrome(St7789Display& display) {
+  display.fillRect(0, 0, display.width(), kUiBar, kPrimary);
+  display.text(kUiMargin, kUiHeaderY, "kChain", kUiFont35, kText, kBg);
+  display.fillRect(kUiMargin, kUiRuleY, display.width() - kUiMargin * 2, 1, kBorder);
 }
 
 int cardY(UiScreen screen, int index, int window) {
@@ -95,20 +98,24 @@ void drawCard(St7789Display& display, int index, int window, bool selected, UiSc
   const int y = cardY(kind == UiScreen::Home ? UiScreen::Single : kind, index, window);
   const int x = kUiMargin;
   const int w = display.width() - kUiMargin * 2;
-  const uint16_t fill = selected ? kPrimary : kSurface;
-  const uint16_t border = selected ? kPrimary : kBorder;
-  display.fillRoundRect(x, y, w, height, kUiRadius, fill, border, kBg);
+  const uint16_t fill = kSurface;
+  if (selected) {
+    display.fillRoundRect(x, y, w, height, kUiRadius, fill, kPrimary, kBg, 2);
+  } else {
+    display.fillRoundRect(x, y, w, height, kUiRadius, fill, kBorder, kBg);
+  }
 
   const uint8_t* icon = iconFor(kind == UiScreen::Home ? UiScreen::Single : kind);
   if (kind == UiScreen::Home) {
     if (index >= 0 && index < kUiHomeCount) icon = iconFor(kUiHome[index].screen);
   }
+  const uint16_t mark = selected ? kPrimary : kText;
   const int iconY = y + (height - kUiIcon) / 2;
-  display.mask(x + kUiPad, iconY, kUiIcon, kUiIcon, icon, kText, fill);
+  display.mask(x + kUiPad, iconY, kUiIcon, kUiIcon, icon, mark, fill);
 
   int textRight = x + w - kUiPad;
   if (chevron) {
-    display.mask(textRight - kUiIcon, iconY, kUiIcon, kUiIcon, kChevron, kText, fill);
+    display.mask(textRight - kUiIcon, iconY, kUiIcon, kUiIcon, kChevron, mark, fill);
     textRight -= kUiIcon + 8;
   }
   const int textX = x + kUiPad + kUiIcon + 8;
@@ -116,19 +123,18 @@ void drawCard(St7789Display& display, int index, int window, bool selected, UiSc
   char fitted[VAULT_HOSTNAME_MAX + 1];
   const bool twoLines = detail != nullptr && detail[0] != '\0';
   if (!twoLines) {
-    fitText(fitted, sizeof(fitted), title == nullptr ? "" : title, kUiFont14, maxWidth);
-    const int textY = y + (height - kUiFont14.height) / 2;
-    display.text(textX, textY, fitted, kUiFont14, kText, fill);
+    fitText(fitted, sizeof(fitted), title == nullptr ? "" : title, kUiFont20, maxWidth);
+    const int textY = y + (height - kUiFont20.height) / 2;
+    display.text(textX, textY, fitted, kUiFont20, kText, fill);
     return;
   }
 
-  const int block = kUiFont14.height + 4 + kUiFont12.height;
+  const int block = kUiFont20.height + 4 + kUiFont16.height;
   const int textY = y + (height - block) / 2;
-  fitText(fitted, sizeof(fitted), title == nullptr ? "" : title, kUiFont14, maxWidth);
-  display.text(textX, textY, fitted, kUiFont14, kText, fill);
-  fitText(fitted, sizeof(fitted), detail, kUiFont12, maxWidth);
-  display.text(textX, textY + kUiFont14.height + 4, fitted, kUiFont12, selected ? kText : kSecondary,
-               fill);
+  fitText(fitted, sizeof(fitted), title == nullptr ? "" : title, kUiFont20, maxWidth);
+  display.text(textX, textY, fitted, kUiFont20, kText, fill);
+  fitText(fitted, sizeof(fitted), detail, kUiFont16, maxWidth);
+  display.text(textX, textY + kUiFont20.height + 4, fitted, kUiFont16, kMuted, fill);
 }
 
 }  // namespace
@@ -172,13 +178,13 @@ void Ui::paint(St7789Display& display, const Vault& vault) {
   }
 
   display.fillRect(0, 0, display.width(), display.height(), kBg);
-  drawTitle(display);
+  drawChrome(display);
   if (screen_ == UiScreen::Help) {
-    display.text(kUiMargin, kUiListTop, "Nothing here yet.", kUiFont14, kMuted, kBg);
+    display.text(kUiMargin, kUiListTop, "Nothing here yet.", kUiFont20, kMuted, kBg);
     return;
   }
   if (!home && count == 0) {
-    display.text(kUiMargin, kUiListTop, "None saved", kUiFont14, kMuted, kBg);
+    display.text(kUiMargin, kUiListTop, "None saved", kUiFont20, kMuted, kBg);
     return;
   }
   const int shown = count < visible ? count : visible;

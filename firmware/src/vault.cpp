@@ -2,19 +2,36 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <LittleFS.h>
 #include <Preferences.h>
 
+#include <cstdio>
 #include <cstring>
+
+#include <esp_partition.h>
 
 #include "config.h"
 
 namespace {
 
 constexpr char kNamespace[] = "kchain";
+constexpr char kVaultPath[] = "/vault.json";
+constexpr char kVaultBak[] = "/vault.json.bak";
+constexpr char kVaultTmp[] = "/vault.json.tmp";
+constexpr size_t kLineMax = 1024;
+constexpr size_t kHeapMargin = 4096;
+
+const char* kWriteError = "Could not write the vault to flash.";
 
 std::string entryKey(uint32_t id) { return std::string("e") + std::to_string(id); }
 
-bool containsId(const std::vector<VaultEntry>& entries, uint32_t id) {
+const char* fullError() {
+  static char text[64];
+  snprintf(text, sizeof(text), "The vault already holds %d entries.", VAULT_MAX_ENTRIES);
+  return text;
+}
+
+bool containsId(const std::deque<VaultEntry>& entries, uint32_t id) {
   for (size_t i = 0; i < entries.size(); i++) {
     if (entries[i].id == id) return true;
   }
@@ -119,10 +136,154 @@ void keepUsedFields(VaultEntry& entry) {
   else entry.phrase.clear();
 }
 
-bool loadFailed(Preferences& prefs, const char*& loadError) {
+bool fieldsFromJson(const JsonDocument& doc, VaultEntry& entry) {
+  if (doc["type"].isUnbound()) {
+    entry.type = EntryType::Generic;
+  } else if (!doc["type"].is<const char*>() ||
+             !entryTypeFrom(doc["type"].as<const char*>(), entry.type)) {
+    return false;
+  }
+
+  const char* name = doc["name"].is<const char*>() ? doc["name"].as<const char*>() : nullptr;
+  const char* username = doc["username"].is<const char*>() ? doc["username"].as<const char*>() : "";
+  const char* password = doc["password"].is<const char*>() ? doc["password"].as<const char*>() : "";
+  const char* phrase = doc["phrase"].is<const char*>() ? doc["phrase"].as<const char*>() : "";
+  entry.name = textOrEmpty(name);
+  entry.username = username;
+  entry.password = password;
+  entry.phrase = phrase;
+  const char* fieldError = nullptr;
+  if (!entryFieldsOk(entry, fieldError)) return false;
+  keepUsedFields(entry);
+  return true;
+}
+
+bool heapRoom(size_t bytes) { return ESP.getMaxAllocHeap() > bytes + kHeapMargin; }
+
+// A blank partition is unformatted. Anything else that will not mount is
+// left alone so a damaged file is not replaced with an empty vault.
+bool partitionBlank(const esp_partition_t* part) {
+  uint8_t buf[128];
+  for (size_t offset = 0; offset < 4096; offset += sizeof(buf)) {
+    if (esp_partition_read(part, offset, buf, sizeof(buf)) != ESP_OK) return false;
+    for (size_t i = 0; i < sizeof(buf); i++) {
+      if (buf[i] != 0xff) return false;
+    }
+  }
+  return true;
+}
+
+bool mountFs() {
+  const esp_partition_t* part =
+      esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "vault");
+  if (part == nullptr) return false;
+  // Format only a blank partition. begin(true) formats when the mount fails,
+  // which would also wipe a damaged filesystem.
+  if (!partitionBlank(part)) return LittleFS.begin(false, "/littlefs", 10, "vault");
+  return LittleFS.begin(true, "/littlefs", 10, "vault");
+}
+
+bool readLine(File& file, std::string& line) {
+  line.clear();
+  if (!file.available()) return false;
+  while (file.available()) {
+    const int raw = file.read();
+    if (raw < 0) break;
+    if (raw == '\r') continue;
+    if (raw == '\n') return true;
+    if (line.size() >= kLineMax) return false;
+    line.push_back(static_cast<char>(raw));
+  }
+  return !line.empty();
+}
+
+bool writeEntryLine(File& file, const VaultEntry& entry) {
+  JsonDocument doc;
+  doc["id"] = entry.id;
+  doc["type"] = entryTypeName(entry.type);
+  doc["name"] = entry.name;
+  if (entry.type == EntryType::Website) doc["username"] = entry.username;
+  if (entry.type != EntryType::Crypto) doc["password"] = entry.password;
+  if (entry.type == EntryType::Crypto) doc["phrase"] = entry.phrase;
+  if (serializeJson(doc, file) == 0) return false;
+  return file.write(static_cast<uint8_t>('\n')) == 1;
+}
+
+enum class Legacy { Absent, Ready, Bad };
+
+Legacy readLegacy(std::deque<VaultEntry>& loaded, uint32_t& next) {
+  Preferences prefs;
+  if (!prefs.begin(kNamespace, true)) {
+    next = 1;
+    return Legacy::Absent;
+  }
+
+  next = prefs.getUInt("next", 1);
+  if (next == 0) next = 1;
+
+  const String idsRaw = prefs.getString("ids", "[]");
+  JsonDocument idsDoc;
+  const DeserializationError idsError = deserializeJson(idsDoc, idsRaw.c_str());
+  if (idsError || !idsDoc.is<JsonArray>()) {
+    prefs.end();
+    return Legacy::Bad;
+  }
+
+  const JsonArray ids = idsDoc.as<JsonArray>();
+  if (ids.size() > static_cast<size_t>(VAULT_MAX_ENTRIES)) {
+    prefs.end();
+    return Legacy::Bad;
+  }
+
+  uint32_t maxId = 0;
+  for (JsonVariant value : ids) {
+    if (!value.is<uint32_t>()) {
+      prefs.end();
+      return Legacy::Bad;
+    }
+    const uint32_t id = value.as<uint32_t>();
+    if (id == 0 || containsId(loaded, id)) {
+      prefs.end();
+      return Legacy::Bad;
+    }
+
+    const std::string key = entryKey(id);
+    const String raw = prefs.getString(key.c_str(), "");
+    if (raw.isEmpty()) {
+      prefs.end();
+      return Legacy::Bad;
+    }
+
+    JsonDocument entryDoc;
+    if (deserializeJson(entryDoc, raw.c_str())) {
+      prefs.end();
+      return Legacy::Bad;
+    }
+
+    VaultEntry entry;
+    entry.id = id;
+    if (!fieldsFromJson(entryDoc, entry)) {
+      prefs.end();
+      return Legacy::Bad;
+    }
+    loaded.push_back(entry);
+    if (id > maxId) maxId = id;
+  }
+
   prefs.end();
-  loadError = "The vault on flash could not be read, so it was left unchanged.";
-  return false;
+  if (next <= maxId) next = maxId + 1;
+  return Legacy::Ready;
+}
+
+void clearLegacy() {
+  Preferences prefs;
+  if (!prefs.begin(kNamespace, true)) return;
+  const bool hasIds = prefs.isKey("ids");
+  prefs.end();
+  if (!hasIds) return;
+  if (!prefs.begin(kNamespace, false)) return;
+  prefs.clear();
+  prefs.end();
 }
 
 }  // namespace
@@ -184,14 +345,16 @@ bool vaultPasswordOk(const char* password, const char*& error) {
 
 bool Vault::begin() {
   entries_.clear();
-  persistedIds_.clear();
   nextId_ = 1;
   focusId_ = 0;
   selected_ = -1;
   mutable_ = false;
   loadError_ = "Could not read the vault from flash.";
 
-  if (!load()) return false;
+  if (!mountFs() || !load()) {
+    entries_.clear();
+    return false;
+  }
 
   mutable_ = true;
   loadError_ = nullptr;
@@ -200,134 +363,120 @@ bool Vault::begin() {
 }
 
 bool Vault::load() {
-  Preferences prefs;
-  if (!prefs.begin(kNamespace, true)) {
-    // A fresh board has no namespace yet. Create an empty vault; that is valid.
-    if (!prefs.begin(kNamespace, false)) return false;
-    if (prefs.putString("ids", "[]") == 0 || prefs.putUInt("next", 1) == 0) {
-      prefs.end();
-      return false;
-    }
-    prefs.end();
-    entries_.clear();
-    persistedIds_.clear();
-    nextId_ = 1;
+  if (LittleFS.exists(kVaultPath)) {
+    if (!loadFile(kVaultPath)) return false;
+    LittleFS.remove(kVaultTmp);
+    LittleFS.remove(kVaultBak);
+    clearLegacy();
     return true;
   }
 
-  nextId_ = prefs.getUInt("next", 1);
-  if (nextId_ == 0) nextId_ = 1;
-
-  const String idsRaw = prefs.getString("ids", "[]");
-  JsonDocument idsDoc;
-  const DeserializationError idsError = deserializeJson(idsDoc, idsRaw.c_str());
-  if (idsError || !idsDoc.is<JsonArray>()) return loadFailed(prefs, loadError_);
-
-  const JsonArray ids = idsDoc.as<JsonArray>();
-  if (ids.size() > static_cast<size_t>(VAULT_MAX_ENTRIES)) return loadFailed(prefs, loadError_);
-
-  std::vector<VaultEntry> loaded;
-  std::vector<uint32_t> loadedIds;
-  uint32_t maxId = 0;
-
-  for (JsonVariant value : ids) {
-    if (!value.is<uint32_t>()) return loadFailed(prefs, loadError_);
-    const uint32_t id = value.as<uint32_t>();
-    if (id == 0) return loadFailed(prefs, loadError_);
-    for (size_t i = 0; i < loadedIds.size(); i++) {
-      if (loadedIds[i] == id) return loadFailed(prefs, loadError_);
-    }
-
-    const std::string key = entryKey(id);
-    const String raw = prefs.getString(key.c_str(), "");
-    if (raw.isEmpty()) return loadFailed(prefs, loadError_);
-
-    JsonDocument entryDoc;
-    if (deserializeJson(entryDoc, raw.c_str())) return loadFailed(prefs, loadError_);
-
-    VaultEntry entry;
-    entry.id = id;
-    // Records written before types existed are name-and-password pairs.
-    if (entryDoc["type"].isUnbound()) {
-      entry.type = EntryType::Generic;
-    } else if (!entryDoc["type"].is<const char*>() ||
-               !entryTypeFrom(entryDoc["type"].as<const char*>(), entry.type)) {
-      return loadFailed(prefs, loadError_);
-    }
-
-    const char* name = entryDoc["name"].is<const char*>() ? entryDoc["name"].as<const char*>() : nullptr;
-    const char* username =
-        entryDoc["username"].is<const char*>() ? entryDoc["username"].as<const char*>() : "";
-    const char* password =
-        entryDoc["password"].is<const char*>() ? entryDoc["password"].as<const char*>() : "";
-    const char* phrase = entryDoc["phrase"].is<const char*>() ? entryDoc["phrase"].as<const char*>() : "";
-    entry.name = textOrEmpty(name);
-    entry.username = username;
-    entry.password = password;
-    entry.phrase = phrase;
-    const char* fieldError = nullptr;
-    if (!entryFieldsOk(entry, fieldError)) return loadFailed(prefs, loadError_);
-    keepUsedFields(entry);
-
-    loaded.push_back(entry);
-    loadedIds.push_back(id);
-    if (id > maxId) maxId = id;
+  // A save that stopped after moving the live file aside still has that copy.
+  if (LittleFS.exists(kVaultBak)) {
+    if (!loadFile(kVaultBak)) return false;
+    LittleFS.remove(kVaultTmp);
+    if (!save()) return false;
+    clearLegacy();
+    return true;
   }
 
-  prefs.end();
+  std::deque<VaultEntry> legacy;
+  uint32_t next = 1;
+  const Legacy found = readLegacy(legacy, next);
+  if (found == Legacy::Bad) return false;
 
-  if (nextId_ <= maxId) nextId_ = maxId + 1;
+  entries_.swap(legacy);
+  nextId_ = next;
+  if (!save()) return false;
+  clearLegacy();
+  return true;
+}
+
+bool Vault::loadFile(const char* path) {
+  File file = LittleFS.open(path, "r");
+  if (!file) return false;
+
+  std::string line;
+  if (!readLine(file, line) || line.empty()) {
+    file.close();
+    return false;
+  }
+
+  JsonDocument meta;
+  if (deserializeJson(meta, line) || !meta["next"].is<uint32_t>()) {
+    file.close();
+    return false;
+  }
+  uint32_t next = meta["next"].as<uint32_t>();
+  if (next == 0) next = 1;
+
+  std::deque<VaultEntry> loaded;
+  uint32_t maxId = 0;
+  while (true) {
+    const bool got = readLine(file, line);
+    if (!got) {
+      if (!line.empty() || file.available()) {
+        file.close();
+        return false;
+      }
+      break;
+    }
+    if (line.empty()) continue;
+    if (loaded.size() >= static_cast<size_t>(VAULT_MAX_ENTRIES)) {
+      file.close();
+      return false;
+    }
+
+    JsonDocument doc;
+    if (deserializeJson(doc, line) || !doc["id"].is<uint32_t>()) {
+      file.close();
+      return false;
+    }
+    VaultEntry entry;
+    entry.id = doc["id"].as<uint32_t>();
+    if (entry.id == 0 || containsId(loaded, entry.id) || !fieldsFromJson(doc, entry)) {
+      file.close();
+      return false;
+    }
+    loaded.push_back(std::move(entry));
+    if (loaded.back().id > maxId) maxId = loaded.back().id;
+  }
+  file.close();
+
+  if (next <= maxId) next = maxId + 1;
   entries_.swap(loaded);
-  persistedIds_.swap(loadedIds);
+  nextId_ = next;
   return true;
 }
 
 bool Vault::save() {
-  Preferences prefs;
-  if (!prefs.begin(kNamespace, false)) return false;
+  LittleFS.remove(kVaultTmp);
+  File file = LittleFS.open(kVaultTmp, "w");
+  if (!file) return false;
 
-  for (size_t i = 0; i < entries_.size(); i++) {
-    JsonDocument doc;
-    const VaultEntry& entry = entries_[i];
-    doc["type"] = entryTypeName(entry.type);
-    doc["name"] = entry.name;
-    if (entry.type == EntryType::Website) doc["username"] = entry.username;
-    if (entry.type != EntryType::Crypto) doc["password"] = entry.password;
-    if (entry.type == EntryType::Crypto) doc["phrase"] = entry.phrase;
-    std::string payload;
-    serializeJson(doc, payload);
-    const std::string key = entryKey(entry.id);
-    if (prefs.putString(key.c_str(), payload.c_str()) == 0) {
-      prefs.end();
+  JsonDocument meta;
+  meta["next"] = nextId_;
+  bool wrote = serializeJson(meta, file) > 0 && file.write(static_cast<uint8_t>('\n')) == 1;
+  for (size_t i = 0; wrote && i < entries_.size(); i++) wrote = writeEntryLine(file, entries_[i]);
+  file.close();
+  if (!wrote) {
+    LittleFS.remove(kVaultTmp);
+    return false;
+  }
+
+  if (LittleFS.exists(kVaultPath)) {
+    LittleFS.remove(kVaultBak);
+    if (!LittleFS.rename(kVaultPath, kVaultBak)) {
+      LittleFS.remove(kVaultTmp);
       return false;
     }
   }
-
-  JsonDocument idsDoc;
-  JsonArray ids = idsDoc.to<JsonArray>();
-  for (size_t i = 0; i < entries_.size(); i++) ids.add(entries_[i].id);
-  std::string idPayload;
-  serializeJson(idsDoc, idPayload);
-  if (prefs.putString("ids", idPayload.c_str()) == 0) {
-    prefs.end();
+  if (!LittleFS.rename(kVaultTmp, kVaultPath)) {
+    LittleFS.rename(kVaultBak, kVaultPath);
+    LittleFS.remove(kVaultTmp);
     return false;
   }
-  if (prefs.putUInt("next", nextId_) == 0 && nextId_ != 0) {
-    // putUInt returns 0 both for a stored 0 and for failure. nextId_ is never 0.
-    prefs.end();
-    return false;
-  }
-
-  for (size_t i = 0; i < persistedIds_.size(); i++) {
-    if (!containsId(entries_, persistedIds_[i])) {
-      const std::string key = entryKey(persistedIds_[i]);
-      prefs.remove(key.c_str());
-    }
-  }
-
-  prefs.end();
-  persistedIds_.clear();
-  for (size_t i = 0; i < entries_.size(); i++) persistedIds_.push_back(entries_[i].id);
+  LittleFS.remove(kVaultBak);
   return true;
 }
 
@@ -382,15 +531,22 @@ int Vault::indexOf(uint32_t id) const {
 bool Vault::add(EntryType type, const char* name, const char* username, const char* password,
                 const char* phrase, uint32_t& newId, const char*& error) {
   if (!mutable_) {
-    error = loadError_ == nullptr ? "Could not write the vault to flash." : loadError_;
+    error = loadError_ == nullptr ? kWriteError : loadError_;
     return false;
   }
   if (size() >= VAULT_MAX_ENTRIES) {
-    error = "The vault already holds 32 entries.";
+    error = fullError();
     return false;
   }
   if (nextId_ == 0) {
-    error = "Could not write the vault to flash.";
+    error = kWriteError;
+    return false;
+  }
+
+  const size_t incoming = strlen(textOrEmpty(name)) + strlen(textOrEmpty(username)) +
+                          strlen(textOrEmpty(password)) + strlen(textOrEmpty(phrase));
+  if (!heapRoom(incoming)) {
+    error = kWriteError;
     return false;
   }
 
@@ -403,32 +559,29 @@ bool Vault::add(EntryType type, const char* name, const char* username, const ch
   if (!entryFieldsOk(entry, error)) return false;
   keepUsedFields(entry);
 
-  const std::vector<VaultEntry> backup = entries_;
-  const std::vector<uint32_t> backupIds = persistedIds_;
-  const uint32_t backupNext = nextId_;
   const int backupSelected = selected_;
-
-  entry.id = nextId_++;
-  entries_.push_back(entry);
+  const uint32_t id = nextId_;
+  entry.id = id;
+  nextId_++;
+  entries_.push_back(std::move(entry));
   if (selected_ < 0) selected_ = 0;
 
   if (!save()) {
-    entries_ = backup;
-    persistedIds_ = backupIds;
-    nextId_ = backupNext;
+    entries_.pop_back();
+    nextId_ = id;
     selected_ = backupSelected;
-    error = "Could not write the vault to flash.";
+    error = kWriteError;
     return false;
   }
 
-  newId = entry.id;
+  newId = id;
   return true;
 }
 
 bool Vault::edit(uint32_t id, EntryType type, const char* name, const char* username,
                  const char* password, const char* phrase, const char*& error) {
   if (!mutable_) {
-    error = loadError_ == nullptr ? "Could not write the vault to flash." : loadError_;
+    error = loadError_ == nullptr ? kWriteError : loadError_;
     return false;
   }
 
@@ -442,7 +595,16 @@ bool Vault::edit(uint32_t id, EntryType type, const char* name, const char* user
     return false;
   }
 
-  VaultEntry next = entries_[static_cast<size_t>(index)];
+  const size_t incoming = strlen(textOrEmpty(name)) + strlen(textOrEmpty(username)) +
+                          strlen(textOrEmpty(password)) + strlen(textOrEmpty(phrase));
+  if (!heapRoom(incoming)) {
+    error = kWriteError;
+    return false;
+  }
+
+  VaultEntry next;
+  next.id = id;
+  next.type = type;
   next.name = textOrEmpty(name);
   next.username = textOrEmpty(username);
   next.password = textOrEmpty(password);
@@ -450,15 +612,12 @@ bool Vault::edit(uint32_t id, EntryType type, const char* name, const char* user
   if (!entryFieldsOk(next, error)) return false;
   keepUsedFields(next);
 
-  const std::vector<VaultEntry> backup = entries_;
-  const std::vector<uint32_t> backupIds = persistedIds_;
-
-  entries_[static_cast<size_t>(index)] = next;
+  VaultEntry previous = std::move(entries_[static_cast<size_t>(index)]);
+  entries_[static_cast<size_t>(index)] = std::move(next);
 
   if (!save()) {
-    entries_ = backup;
-    persistedIds_ = backupIds;
-    error = "Could not write the vault to flash.";
+    entries_[static_cast<size_t>(index)] = std::move(previous);
+    error = kWriteError;
     return false;
   }
   return true;
@@ -466,7 +625,7 @@ bool Vault::edit(uint32_t id, EntryType type, const char* name, const char* user
 
 bool Vault::remove(uint32_t id, const char*& error) {
   if (!mutable_) {
-    error = loadError_ == nullptr ? "Could not write the vault to flash." : loadError_;
+    error = loadError_ == nullptr ? kWriteError : loadError_;
     return false;
   }
 
@@ -476,8 +635,7 @@ bool Vault::remove(uint32_t id, const char*& error) {
     return false;
   }
 
-  const std::vector<VaultEntry> backup = entries_;
-  const std::vector<uint32_t> backupIds = persistedIds_;
+  VaultEntry removed = std::move(entries_[static_cast<size_t>(index)]);
   const int backupSelected = selected_;
   const uint32_t backupFocus = focusId_;
 
@@ -492,11 +650,10 @@ bool Vault::remove(uint32_t id, const char*& error) {
   }
 
   if (!save()) {
-    entries_ = backup;
-    persistedIds_ = backupIds;
+    entries_.insert(entries_.begin() + index, std::move(removed));
     selected_ = backupSelected;
     focusId_ = backupFocus;
-    error = "Could not write the vault to flash.";
+    error = kWriteError;
     return false;
   }
   return true;

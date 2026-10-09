@@ -11,6 +11,10 @@ class ButtonInput : public Input {
   // True once for each debounced press, including the start of a hold.
   bool consumePress();
   bool held() const { return stablePressed_; }
+  // True while a press is down or a tap is still waiting out the double-tap window.
+  bool busy() const {
+    return stablePressed_ || phase_ != Phase::Idle || queued_ != InputEvent::None;
+  }
   // True after poll() sees the second press of a double tap, until that press ends.
   bool inSecondTap() const { return secondTap_; }
 

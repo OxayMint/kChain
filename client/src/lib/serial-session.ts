@@ -62,7 +62,9 @@ export class SerialVault {
     );
     await port.open({ baudRate: 115200 });
     try {
-      await port.setSignals({ dataTerminalReady: false, requestToSend: false });
+      // macOS drops outbound bytes while DTR is low. RTS stays low so the
+      // chip does not enter the bootloader.
+      await port.setSignals({ dataTerminalReady: true, requestToSend: false });
     } catch {
       // Some hosts ignore line signals on USB CDC. The port is still open.
     }

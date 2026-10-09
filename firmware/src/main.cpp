@@ -27,6 +27,27 @@ enum class Activity : uint8_t { Idle, Active };
 
 Activity activity = Activity::Idle;
 unsigned long lastActivityMs = 0;
+bool glassAwake = true;
+// The contact that leaves sleep only wakes the panel.
+// The button gesture already in progress is dropped, including the tap
+// that arrives after the double-tap window.
+bool swallowGesture = false;
+
+void noteActivity() { lastActivityMs = millis(); }
+
+void setGlassAwake(bool awake) {
+  if (!panelReady || glassAwake == awake) return;
+  glassAwake = awake;
+  if (awake) {
+    panel.wake();
+    // Detents that arrived during the 120 ms wake wait are part of the
+    // contact that only turns the panel on.
+    encoderInput.takeSteps();
+    ui.invalidate();
+  } else {
+    panel.sleep();
+  }
+}
 
 void showMenu() {
   if (panelReady) ui.paint(panel, vault);
@@ -56,6 +77,7 @@ void setup() {
   encoderInput.begin();
   ui.sync(vault);
   showMenu();
+  noteActivity();
   serialLink.emitReady(vault);
 }
 
@@ -107,30 +129,49 @@ void loop() {
   // The tap is reported only after the double-tap window closes.
   const InputEvent event = buttonInput.poll();
   buttonInput.consumePress();
-  if (event == InputEvent::Tap) {
-    lastActivityMs = millis();
-    if (ui.onTap()) publishSelection();
-  } else if (event == InputEvent::Hold) {
-    lastActivityMs = millis();
-    ui.onHold();
-  } else if (event == InputEvent::DoubleTap) {
-    lastActivityMs = millis();
-    if (ui.canType(vault)) {
+  // Wheel up is positive. Wheel down is negative.
+  const int steps = encoderInput.takeSteps();
+  const bool gesture = event != InputEvent::None || buttonInput.busy();
+
+  if (!glassAwake) {
+    if (gesture || steps != 0) {
+      setGlassAwake(true);
+      noteActivity();
+      swallowGesture = gesture;
+    }
+  } else if (swallowGesture) {
+    noteActivity();
+    if (steps != 0) {
+      ui.onWheel(vault, steps);
       publishSelection();
-      if (typeSelected()) goIdle();
+    }
+    if (!gesture) swallowGesture = false;
+  } else {
+    if (event == InputEvent::Tap) {
+      noteActivity();
+      if (ui.onTap()) publishSelection();
+    } else if (event == InputEvent::Hold) {
+      noteActivity();
+      ui.onHold();
+    } else if (event == InputEvent::DoubleTap) {
+      noteActivity();
+      if (ui.canType(vault)) {
+        publishSelection();
+        if (typeSelected()) goIdle();
+        // Typing can outlast the idle window. The wait starts when it finishes.
+        noteActivity();
+      }
+    }
+
+    if (steps != 0) {
+      noteActivity();
+      ui.onWheel(vault, steps);
+      publishSelection();
     }
   }
 
-  // Wheel up is positive. Wheel down is negative.
-  const int steps = encoderInput.takeSteps();
-  if (steps != 0) {
-    lastActivityMs = millis();
-    ui.onWheel(vault, steps);
-    publishSelection();
-  }
-
   // A held button is activity. The idle timeout starts at release.
-  if (buttonInput.held()) lastActivityMs = millis();
+  if (buttonInput.held()) noteActivity();
 
   ui.sync(vault);
   if (activity == Activity::Active) {
@@ -139,10 +180,15 @@ void loop() {
     if (slot >= 0 && vault.selectSlot(slot) && vault.selectedId() != beforeId) {
       serialLink.emitSelected(vault);
     }
-    if (vault.selectableCount() == 0 || millis() - lastActivityMs >= ACTIVE_IDLE_MS) goIdle();
+    if (vault.selectableCount() == 0) goIdle();
   }
 
-  showMenu();
+  if (millis() - lastActivityMs >= ACTIVE_IDLE_MS) {
+    if (activity == Activity::Active) goIdle();
+    setGlassAwake(false);
+  }
+
+  if (glassAwake) showMenu();
 
   bool usbReady = false;
   if (serialLink.consumeUsbChange(usbReady)) serialLink.emitUsb(usbReady);

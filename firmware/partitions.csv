@@ -1,6 +1,9 @@
-# 4 MB flash. One factory app, large enough for the BLE HID stack.
-# Vault entries live in NVS, not in a filesystem partition.
+# 4 MB flash. The factory app occupies the lower 2 MB.
+# The vault file lives in the upper 2 MB. The subtype is spiffs so the
+# partition table accepts it; the firmware mounts that partition as LittleFS.
+# NVS stays so a vault written by older firmware can be copied across once.
 # Name,   Type, SubType, Offset,  Size, Flags
 nvs,      data, nvs,     0x9000,  0x5000,
 otadata,  data, ota,     0xe000,  0x2000,
 app0,     app,  factory, 0x10000, 0x1F0000,
+vault,    data, spiffs,  0x200000, 0x200000,

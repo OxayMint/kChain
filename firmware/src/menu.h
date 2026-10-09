@@ -2,6 +2,8 @@
 
 #include <stdint.h>
 
+#include <vector>
+
 #include "config.h"
 #include "vault.h"
 
@@ -111,7 +113,7 @@ class Menu {
   MenuRow rows_[MENU_LIST_ROWS] = {};
 
   bool nameMatches(const std::string& name) const;
-  int matchingSlots(const Vault& vault, int* slots, int cap) const;
+  int matchingSlots(const Vault& vault, std::vector<int>& slots) const;
   void applySymbolStep(int step);
   void stepSymbol(int delta);
   void fillRows(const Vault& vault);

@@ -92,30 +92,48 @@ void SerialLink::poll(Vault& vault) {
 
 void SerialLink::sendSnapshot(const char* op, bool ok, const char* error, const Vault& vault,
                               uint32_t req, bool hasReq, uint32_t createdId, bool hasCreatedId) {
-  JsonDocument doc;
-  doc["op"] = op;
-  doc["ok"] = ok;
-  if (hasReq) doc["req"] = req;
   if (!ok) {
+    JsonDocument doc;
+    doc["op"] = op;
+    doc["ok"] = false;
+    if (hasReq) doc["req"] = req;
     doc["error"] = error == nullptr ? "The device rejected the command." : error;
     writeJson(doc);
     return;
   }
 
-  if (hasCreatedId) doc["id"] = createdId;
-  JsonArray entries = doc["entries"].to<JsonArray>();
+  // One entry at a time. A single document of the whole vault would copy
+  // every secret into RAM again.
+  Serial.print("{\"op\":\"");
+  Serial.print(op);
+  Serial.print("\",\"ok\":true");
+  if (hasReq) {
+    Serial.print(",\"req\":");
+    Serial.print(req);
+  }
+  if (hasCreatedId) {
+    Serial.print(",\"id\":");
+    Serial.print(createdId);
+  }
+  Serial.print(",\"entries\":[");
   for (int i = 0; i < vault.size(); i++) {
     const VaultEntry* entry = vault.at(i);
-    writeEntry(entries.add<JsonObject>(), *entry);
+    if (entry == nullptr) continue;
+    if (i > 0) Serial.print(',');
+    JsonDocument doc;
+    writeEntry(doc.to<JsonObject>(), *entry);
+    serializeJson(doc, Serial);
   }
-  if (vault.selectedId() == 0) doc["selectedId"] = nullptr;
-  else doc["selectedId"] = vault.selectedId();
-  doc["active"] = active_;
+  Serial.print("],\"selectedId\":");
+  if (vault.selectedId() == 0) Serial.print("null");
+  else Serial.print(vault.selectedId());
+  Serial.print(",\"active\":");
+  Serial.print(active_ ? "true" : "false");
   // This build has no Bluetooth keyboard. The field stays so older editors
   // still parse the snapshot.
-  doc["keyboardConnected"] = false;
-  doc["usbTyping"] = usbTyping_;
-  writeJson(doc);
+  Serial.print(",\"keyboardConnected\":false,\"usbTyping\":");
+  Serial.print(usbTyping_ ? "true" : "false");
+  Serial.print("}\n");
 }
 
 void SerialLink::handleLine(const char* line, Vault& vault) {

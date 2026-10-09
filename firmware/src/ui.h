@@ -2,6 +2,8 @@
 
 #include <stdint.h>
 
+#include <vector>
+
 #include "vault.h"
 
 // On-device screens. Home opens the other four. Single, Web, and Crypto
@@ -22,15 +24,18 @@ constexpr UiHomeItem kUiHome[] = {
 };
 constexpr int kUiHomeCount = 4;
 
-// Layout shared by the screen state and the drawer. The title font is 20px,
-// so the list starts under a 16px header gap.
+// Layout shared by the screen state and the drawer. A gold bar is kUiBar
+// pixels on the top edge. The wordmark is 35px at kUiHeaderY, a hairline
+// sits at kUiRuleY, and the list starts at kUiListTop.
 static constexpr int kUiMargin = 12;
-static constexpr int kUiHeaderY = 16;
-static constexpr int kUiListTop = 52;
+static constexpr int kUiBar = 4;
+static constexpr int kUiHeaderY = 12;
+static constexpr int kUiRuleY = 52;
+static constexpr int kUiListTop = 60;
 static constexpr int kUiCardGap = 8;
-static constexpr int kUiCardH = 48;
-static constexpr int kUiWebH = 64;
-static constexpr int kUiRadius = 12;
+static constexpr int kUiCardH = 52;
+static constexpr int kUiWebH = 72;
+static constexpr int kUiRadius = 14;
 static constexpr int kUiPad = 16;
 static constexpr int kUiIcon = 16;
 static constexpr int kUiBottom = 12;
@@ -66,6 +71,9 @@ class Ui {
   int highlightedSlot(const Vault& vault) const;
 
   UiScreen screen() const { return screen_; }
+  // The next paint redraws the whole screen. Used when the panel wakes,
+  // because a command while it was asleep would have been ignored.
+  void invalidate() { draw_ = Draw::Full; }
   void paint(St7789Display& display, const Vault& vault);
 
  private:
@@ -89,7 +97,7 @@ class Ui {
 
   Place& placeFor(UiScreen screen);
   const Place& placeFor(UiScreen screen) const;
-  int collect(const Vault& vault, EntryType type, int* slots) const;
+  int collect(const Vault& vault, EntryType type, std::vector<int>& slots) const;
   bool listType(UiScreen screen, EntryType& type) const;
   void retarget(const Vault& vault, Place& place, EntryType type);
   void placeWindow(Place& place, int count, int visible) const;

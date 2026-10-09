@@ -4,7 +4,7 @@ export const LIMITS = {
   usernameMax: 128,
   passwordMax: 128,
   phraseMax: 256,
-  entryMax: 32,
+  entryMax: 2048,
 } as const;
 
 export const ESPRESSIF_USB_VENDOR_ID = 0x303a;

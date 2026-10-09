@@ -77,18 +77,9 @@ export class AgentVault implements VaultSession {
     }
     if (this.waiter) throw new Error("Another command is still running.");
     const req = ++this.nextReq;
-    const response = await fetch(`${USB_TYPER_URL}/line`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...command, req }),
-    });
-    if (response.status === 503) {
-      throw new Error("The host program is waiting for the board.");
-    }
-    if (!response.ok) {
-      throw new Error("The host program did not accept the command.");
-    }
-    return new Promise((resolve, reject) => {
+    // Arm the waiter before the POST. The board often answers on the event
+    // stream before this request returns, and that reply would be dropped.
+    const pending = new Promise<DeviceResponse>((resolve, reject) => {
       const timer = setTimeout(() => {
         if (this.waiter?.req !== req) return;
         this.waiter = null;
@@ -96,6 +87,33 @@ export class AgentVault implements VaultSession {
       }, timeoutMs);
       this.waiter = { req, resolve, reject, timer };
     });
+    try {
+      const response = await fetch(`${USB_TYPER_URL}/line`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...command, req }),
+      });
+      if (this.waiter?.req !== req) return pending;
+      if (response.status === 503) {
+        throw new Error("The host program is waiting for the board.");
+      }
+      if (!response.ok) {
+        throw new Error("The host program did not accept the command.");
+      }
+    } catch (error) {
+      const wrapped =
+        error instanceof Error
+          ? error
+          : new Error("The host program did not accept the command.");
+      if (this.waiter?.req === req) {
+        clearTimeout(this.waiter.timer);
+        const waiter = this.waiter;
+        this.waiter = null;
+        waiter.reject(wrapped);
+      }
+      return pending;
+    }
+    return pending;
   }
 
   async close(): Promise<void> {

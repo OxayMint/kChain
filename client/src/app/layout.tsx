@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
+import { Geist, Geist_Mono, Source_Serif_4 } from "next/font/google";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -12,9 +12,8 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-const display = Instrument_Serif({
+const display = Source_Serif_4({
   variable: "--font-instrument",
-  weight: "400",
   subsets: ["latin"],
 });
 

@@ -1,7 +1,5 @@
 #include "ui.h"
 
-#include "config.h"
-
 namespace {
 
 int wrap(int value, int count) {
@@ -52,20 +50,20 @@ bool Ui::listType(UiScreen screen, EntryType& type) const {
   return false;
 }
 
-int Ui::collect(const Vault& vault, EntryType type, int* slots) const {
-  int count = 0;
+int Ui::collect(const Vault& vault, EntryType type, std::vector<int>& slots) const {
+  slots.clear();
   const int total = vault.size();
-  for (int i = 0; i < total && count < VAULT_MAX_ENTRIES; i++) {
+  for (int i = 0; i < total; i++) {
     const VaultEntry* entry = vault.at(i);
-    if (entry != nullptr && entry->type == type) slots[count++] = i;
+    if (entry != nullptr && entry->type == type) slots.push_back(i);
   }
-  return count;
+  return static_cast<int>(slots.size());
 }
 
 int Ui::listCount(const Vault& vault) const {
   EntryType type;
   if (!listType(screen_, type)) return 0;
-  int slots[VAULT_MAX_ENTRIES];
+  std::vector<int> slots;
   return collect(vault, type, slots);
 }
 
@@ -86,7 +84,7 @@ void Ui::placeWindow(Place& place, int count, int visible) const {
 }
 
 void Ui::retarget(const Vault& vault, Place& place, EntryType type) {
-  int slots[VAULT_MAX_ENTRIES];
+  std::vector<int> slots;
   const int count = collect(vault, type, slots);
   if (count == 0) {
     place.index = 0;
@@ -133,7 +131,7 @@ uint32_t Ui::contentStamp(const Vault& vault) const {
 const VaultEntry* Ui::entryAt(const Vault& vault, int index) const {
   EntryType type;
   if (!listType(screen_, type)) return nullptr;
-  int slots[VAULT_MAX_ENTRIES];
+  std::vector<int> slots;
   const int count = collect(vault, type, slots);
   if (index < 0 || index >= count) return nullptr;
   return vault.at(slots[index]);
@@ -167,7 +165,7 @@ bool Ui::onWheel(const Vault& vault, int delta) {
 
   EntryType type;
   if (!listType(screen_, type)) return false;
-  int slots[VAULT_MAX_ENTRIES];
+  std::vector<int> slots;
   const int count = collect(vault, type, slots);
   if (count <= 0) return false;
   Place& place = placeFor(screen_);
@@ -207,7 +205,7 @@ bool Ui::onHold() {
 int Ui::highlightedSlot(const Vault& vault) const {
   EntryType type;
   if (!listType(screen_, type)) return -1;
-  int slots[VAULT_MAX_ENTRIES];
+  std::vector<int> slots;
   const int count = collect(vault, type, slots);
   if (count <= 0) return -1;
   int index = placeFor(screen_).index;
