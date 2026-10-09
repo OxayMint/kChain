@@ -1,29 +1,29 @@
 # kChain
 
-kChain is a vault that lives on an ESP32-C3 Super Mini. This experimental build keeps the radio off. The firmware releases the Bluetooth controller at boot and never starts Wi-Fi. A roller encoder picks an entry, and a double tap types it through the USB cable into whatever field is focused on the computer. A browser page edits the vault over the same USB port while the board is plugged in, and shows which entry the wheel is on.
+kChain is a vault that lives on an ESP32-S3. This experimental build keeps the radio off. The firmware releases the Bluetooth controller at boot and never starts Wi-Fi. A roller encoder picks an entry, and a double tap types it through the USB cable into whatever field is focused on the computer. A browser page edits the vault over the same USB port while the board is plugged in, and shows which entry the wheel is on.
 
 Entries are stored in the clear on device flash. There is no encryption and no unlock PIN. An entry is one of three types. Generic is a name and a password. Website is a hostname, a username or email, and a password. Crypto is a label and several words separated by spaces.
 
 ## Pins
 
-The button is active-low. Wire the switch between GPIO 5 and GND. The firmware enables the internal pull-up. Change `PIN_BUTTON` in `firmware/include/config.h` and rebuild. The file rejects pins this board cannot use.
+The header is labeled 1–13, GND, 5V, 3V, RX, and TX. The number is the GPIO.
 
-The mouse-wheel encoder navigates (the H-13 mark is the 13 mm body). Wire its common pin to GND, A to GPIO 6, and B to GPIO 7. The common pin is the middle one. Each detent steps one matching entry. While a search letter is blinking, a detent changes that letter instead. The wheel walks A to Z and then a delete mark, and both directions wrap. Wheel up moves forward and wheel down moves back. Swap A and B if those directions feel backwards.
+The button is active-low. Wire the switch between GPIO 7 and GND. The firmware enables the internal pull-up. Change `PIN_BUTTON` in `firmware/include/config.h` and rebuild. The file rejects pins this board cannot use.
 
-The blue onboard LED is GPIO 8, active-low. The firmware leaves it undriven. The 0.91 inch OLED is I2C: SDA is GPIO 1, and the clock (marked SCK on the module) is GPIO 0. Power it from 3.3 V. While the board is awake the panel shows the search query and two matching names. The names are right-aligned, with the type icon after the name and a blank line between them. The selected name is larger. A dot on its left draws a line to a bar on the left edge. A type opens that bar and slides the name through. Idle clears the glass. The editor shows the same idle and selection state.
+The mouse-wheel encoder navigates (the H-13 mark is the 13 mm body). Wire its common pin to GND, A to GPIO 8, and B to GPIO 9. The common pin is the middle one. Each detent steps one matching entry. While a search letter is blinking, a detent changes that letter instead. The wheel walks A to Z and then a delete mark, and both directions wrap. Wheel up moves forward and wheel down moves back. Swap A and B if those directions feel backwards.
+
+The panel is a 2.0 inch ST7789, 240×320, on SPI. Power it from 3.3 V. Module SCL (clock) is GPIO 1, SDA (MOSI) is GPIO 2, RST is GPIO 3, DC is GPIO 4, CS is GPIO 5, and BL (backlight) is GPIO 6. This build draws a color test on that glass: red, green, and blue bands, a white frame, and a black OK. The search query and the two matching names are not drawn yet. The editor still shows idle and selection state.
 
 Leave these alone:
 
-- GPIO 2 and 9 are strapping / boot pins. GPIO 9 is the BOOT button. GPIO 8 is also a strapping pin; it is the onboard LED and is not a button input.
-- GPIO 20 and 21 stay free for the UART. USB serial uses the native USB port, not those pins.
-- GPIO 11–19 are not on the header. They are the SPI flash and the native USB pins.
-- 5V, G, and 3.3V are power only.
-
-Usable button GPIOs on the header are 0, 1, 3, 4, 5, 6, 7, and 10. GPIO 0 and 1 are the OLED in this build, so the button and the encoder stay off those two.
+- GPIO 0, 45, and 46 are strapping pins. They are not on this header. GPIO 3 is also a strap; it is the display reset and is held high after boot.
+- RX and TX stay free for the UART. USB serial uses the native USB port, not those pins.
+- GPIO 19 and 20 are the native USB pins. GPIO 26–32 are the SPI flash. None of them are on the header.
+- 5V, GND, and 3V are power only.
 
 ## Firmware
 
-The PlatformIO target is the ESP32-C3 (DevKitM-1 board definition, the closest match for a Super Mini) with native USB CDC turned on (`ARDUINO_USB_MODE=1` and `ARDUINO_USB_CDC_ON_BOOT=1`).
+The PlatformIO target is the ESP32-S3 (DevKitC-1 board definition, the closest match for this header) with native USB CDC turned on (`ARDUINO_USB_CDC_ON_BOOT=1`). The image is 4 MB, which is the flash on this header. A larger module still accepts it. There is no PSRAM.
 
 From the repo root:
 
@@ -36,11 +36,11 @@ pio device monitor
 
 `pio run` compiles. `pio run -t upload` flashes. This repo was not flashed from here; plug the board in and upload it yourself.
 
-If upload never starts, hold BOOT (GPIO 9), tap RST, release BOOT, and run the upload again. The serial monitor does not assert DTR/RTS, so opening it should not reset the chip.
+If upload never starts, hold BOOT (GPIO 0), tap RST, release BOOT, and run the upload again. The serial monitor does not assert DTR/RTS, so opening it should not reset the chip.
 
 An empty vault is valid. On first boot the firmware creates one. The board starts idle, and a press does nothing until there is an entry. USB serial keeps running in idle. The radio does not. While the editor is connected it shows “Device is idle”.
 
-A tap wakes the board onto entry 1, or onto the login the extension has marked for the current page. The search query is empty after a wake, so wheel up and wheel down step through every entry and wrap. A turn also wakes the board onto the entry it lands on. The editor then shows that entry, for example “On the device: 2. github.com”. The panel shows the query on top and two matching names below, and clears them when the board returns to idle. Wheel up puts the next match on the top line. Wheel down puts the previous match on the bottom line. A double tap types the selected entry through the USB typer. As the type starts, the left edge opens and the name slides through it, then the board returns to idle. If the USB typer is not running, the double tap does not type. A generic entry types its password. A website entry types the username, a Tab key, then the password. The hostname is not typed. A crypto entry types its words, spaces included. It also returns to idle after 5 seconds with the button released and the wheel still. Typing releases every key when it finishes. It does not press Enter. The tap or double tap that wakes the board leaves the entry untyped; a later double tap types it. Holding the button while awake adds a blinking letter, starting at A. A press released within 200 ms does not add a letter; it is a click, and a second click within 500 ms is a double tap. Until the button is released, the wheel changes that letter from A to Z, with a delete mark between them. Landing on delete removes the previous letter. The list narrows to names that start with the query, ignoring case, and shows two of them. Releasing the button leaves the letter solid. Another press adds the next letter. After that the wheel steps through matches only. A double tap types. If that gesture had already added a letter, the letter is removed first. If nothing matches, the panel says not found and a double tap does not type.
+A tap wakes the board onto entry 1, or onto the login the extension has marked for the current page. The search query is empty after a wake, so wheel up and wheel down step through every entry and wrap. A turn also wakes the board onto the entry it lands on. The editor then shows that entry, for example “On the device: 2. github.com”. The glass keeps the color test while the board is awake or idle. Wheel up moves to the next match. Wheel down moves to the previous one. A double tap types the selected entry through the USB typer, then the board returns to idle. If the USB typer is not running, the double tap does not type. A generic entry types its password. A website entry types the username, a Tab key, then the password. The hostname is not typed. A crypto entry types its words, spaces included. It also returns to idle after 5 seconds with the button released and the wheel still. Typing releases every key when it finishes. It does not press Enter. The tap or double tap that wakes the board leaves the entry untyped; a later double tap types it. Holding the button while awake adds a blinking letter, starting at A. A press released within 200 ms does not add a letter; it is a click, and a second click within 500 ms is a double tap. Until the button is released, the wheel changes that letter from A to Z, with a delete mark between them. Landing on delete removes the previous letter. The list narrows to names that start with the query, ignoring case. Releasing the button leaves the letter solid. Another press adds the next letter. After that the wheel steps through matches only. A double tap types. If that gesture had already added a letter, the letter is removed first. If nothing matches, a double tap does not type.
 
 ## Client
 
@@ -56,7 +56,7 @@ Then open [http://localhost:4317](http://localhost:4317). Plug in the board and 
 
 ## USB typing
 
-The ESP32-C3 USB port is a serial port. It cannot appear as a USB keyboard. Opening this page starts a typer on the computer, and a double tap types the selected entry into the focused field. A website entry is the username, a Tab, then the password.
+The ESP32-S3 USB port is a serial port. It cannot appear as a USB keyboard. Opening this page starts a typer on the computer, and a double tap types the selected entry into the focused field. A website entry is the username, a Tab, then the password.
 
 Plug in the board and open the page. It connects when the board shows up. The first password typed on macOS needs Accessibility permission for `kchain-type` (System Settings → Privacy & Security → Accessibility).
 

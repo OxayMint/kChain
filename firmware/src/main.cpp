@@ -4,9 +4,8 @@
 #include "config.h"
 #include "encoder_input.h"
 #include "menu.h"
-#include "menu_draw.h"
 #include "serial_link.h"
-#include "ssd1306_display.h"
+#include "st7789_display.h"
 #include "vault.h"
 
 ButtonInput buttonInput;
@@ -15,11 +14,10 @@ Input& input = buttonInput;
 Vault vault;
 SerialLink serialLink;
 Menu menu;
-Ssd1306Display panel;
-MenuDrawer drawer;
+St7789Display panel;
 bool panelReady = false;
 
-// The C3 HAL keeps the Bluetooth controller unless this returns false.
+// The S3 HAL keeps the Bluetooth controller unless this returns false.
 // initArduino then releases that memory before setup, so the radio cannot start.
 // This program never starts Wi-Fi either.
 extern "C" bool btInUse() { return false; }
@@ -37,9 +35,8 @@ unsigned long searchArmMs = 0;
 // That press did open search edit, so a double tap drops the new letter.
 bool searchLetterPending = false;
 
-void showMenu() {
-  if (panelReady) drawer.draw(panel, menu.frame());
-}
+// The panel is showing the bring-up pattern. The menu is not drawn on it yet.
+void showMenu() {}
 
 // Runs while requestUsbType waits. loop() is not turning, so the name
 // would otherwise sit still until the computer answers.
@@ -52,11 +49,12 @@ void setup() {
   // USB on this chip uses its own clock, so the serial port stays up.
   setCpuFrequencyMhz(CPU_MHZ);
 
-  // Native USB CDC. GPIO 20 and 21 are not used. The radio stays down:
+  // Native USB CDC. RX and TX are not used. The radio stays down:
   // Bluetooth memory was released at boot, and Wi-Fi is never started.
   Serial.begin(SERIAL_BAUD);
 
   panelReady = panel.begin();
+  if (panelReady) panel.drawTest();
   input.begin();
   vault.begin();
   encoderInput.begin();

@@ -3,13 +3,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// kChain pin and device settings for the ESP32-C3 Super Mini.
+// kChain pin and device settings for the ESP32-S3.
 //
-// Header silkscreen: GPIO 0-10, GPIO 20, GPIO 21, 5V, G, 3.3V.
+// Header silkscreen: 1-13, GND, 5V, 3V, RX, TX. The number is the GPIO.
 // The button is active-low. Wire the switch between its GPIO and GND.
 // The internal pull-up holds the idle pin high; a press reads low.
 //
-// The button is GPIO 5. A tap wakes the board. While awake, a press held
+// The button is GPIO 7. A tap wakes the board. While awake, a press held
 // past SEARCH_EDIT_ARM_MS appends a blinking search letter. Releasing it
 // leaves the letter solid. A shorter press is a click, so two of them can
 // be a double tap. A double tap types the selected entry, and drops a letter
@@ -17,34 +17,37 @@
 // until release. Delete sits between Z and A.
 //
 // The mouse-wheel encoder navigates (body marked H-13, 13 mm tall).
-// A is GPIO 6, B is GPIO 7, and the common pin is ground. Wheel up steps
+// A is GPIO 8, B is GPIO 9, and the common pin is ground. Wheel up steps
 // to the next matching entry and wheel down steps to the previous one;
 // both wrap. While a search letter is blinking, the wheel changes that
 // letter instead, with a delete mark between Z and A.
 // These wheels are 24 detents and 12 pulses
 // per turn, so one click is two quadrature transitions.
 //
-// GPIO 8 is the onboard LED and a strapping pin. The firmware does not
-// drive it. While the board is awake the 0.91 inch panel shows the search
-// query and two matching names, right-aligned, with the type icon after the
-// name. The selected name is larger. A line runs from it to a bar on the
-// left edge. A type opens that bar and slides the name through. Idle clears
-// the glass.
+// The panel is a 2.0 inch ST7789, 240x320, SPI. The module silkscreen reads
+// GND, VCC, SCL, SDA, RST, DC, CS, BL. VCC is 3.3 V. SCL (the clock) is
+// GPIO 1, SDA (MOSI) is GPIO 2, RST is GPIO 3, DC is GPIO 4, CS is GPIO 5,
+// and BL is GPIO 6. BL driven high turns the backlight on. GPIO 3 is a
+// strapping pin; holding reset high after boot is that strap's idle level.
+// Bring-up draws a color pattern. The menu is not on this glass yet.
 //
 // Leave these alone:
-//   GPIO 2, 9       strapping / boot. GPIO 9 is the BOOT button.
-//   GPIO 20, 21     UART. Kept free; USB serial uses the native USB port.
-//   GPIO 11-19      not on the header (SPI flash and native USB).
-//   5V, G, 3.3V     power only. Do not use them as signals.
+//   GPIO 0, 45, 46  strapping. Not on this header.
+//   GPIO 19, 20     native USB. USB serial uses that port, not RX and TX.
+//   GPIO 26-32      SPI flash. Not on the header.
+//   RX, TX          UART, GPIO 44 and GPIO 43. Kept free.
+//   5V, GND, 3V     power only. Do not use them as signals.
 
-static constexpr int PIN_BUTTON = 5;
-static constexpr int PIN_ENCODER_A = 6;
-static constexpr int PIN_ENCODER_B = 7;
-// 0.91 inch SSD1306, 128x32, on I2C. The module silkscreen says SCK for the
-// clock. SDA is GPIO 1 and that clock is GPIO 0. The module pull-ups hold
-// both lines high while the bus is idle.
-static constexpr int PIN_OLED_SDA = 1;
-static constexpr int PIN_OLED_SCL = 0;
+static constexpr int PIN_BUTTON = 7;
+static constexpr int PIN_ENCODER_A = 8;
+static constexpr int PIN_ENCODER_B = 9;
+// Module pin names. SDA is SPI MOSI, not an I2C data line.
+static constexpr int PIN_TFT_SCL = 1;
+static constexpr int PIN_TFT_SDA = 2;
+static constexpr int PIN_TFT_RST = 3;
+static constexpr int PIN_TFT_DC = 4;
+static constexpr int PIN_TFT_CS = 5;
+static constexpr int PIN_TFT_BL = 6;
 // Two same-direction transitions are one detent. One edge is only half
 // a click, which is what made the selection hop to the neighbor and back.
 static constexpr int ENCODER_COUNTS_PER_DETENT = 2;
@@ -77,7 +80,7 @@ static constexpr size_t SEARCH_QUERY_MAX = 21;
 // core out of idle, and that is most of the heat while the board is on the
 // 5V from USB-C. This is shorter than the button debounce.
 static constexpr unsigned long LOOP_POLL_MS = 10;
-// 160 MHz is the Arduino default. Button and USB do not need it.
+// 240 MHz is the Arduino default on this chip. Button and USB do not need it.
 static constexpr uint32_t CPU_MHZ = 80;
 
 // Typing waits this long for the USB typer to finish the password.
@@ -97,25 +100,32 @@ static constexpr size_t VAULT_PHRASE_MAX = 256;
 static constexpr uint32_t SERIAL_BAUD = 115200;
 static constexpr int PROTOCOL_VERSION = 1;
 
-constexpr bool pinIsUsable(int pin) {
-  return pin == 0 || pin == 1 || pin == 3 || pin == 4 || pin == 5 || pin == 6 ||
-         pin == 7 || pin == 10;
-}
+constexpr bool pinIsUsable(int pin) { return pin >= 1 && pin <= 13; }
 
-static_assert(pinIsUsable(PIN_BUTTON),
-              "button must use a free Super Mini GPIO (not 2, 8, 9, 11-21)");
+static_assert(pinIsUsable(PIN_BUTTON), "button must use GPIO 1-13");
 static_assert(pinIsUsable(PIN_ENCODER_A) && pinIsUsable(PIN_ENCODER_B),
-              "encoder must use free Super Mini GPIOs (not 2, 8, 9, 11-21)");
+              "encoder must use GPIO 1-13");
 static_assert(PIN_ENCODER_A != PIN_ENCODER_B && PIN_ENCODER_A != PIN_BUTTON &&
                   PIN_ENCODER_B != PIN_BUTTON,
               "encoder pins must differ from each other and the button");
-static_assert(pinIsUsable(PIN_OLED_SDA) && pinIsUsable(PIN_OLED_SCL),
-              "oled must use a free Super Mini GPIO (not 2, 8, 9, 11-21)");
-static_assert(PIN_OLED_SDA != PIN_OLED_SCL && PIN_OLED_SDA != PIN_BUTTON &&
-                  PIN_OLED_SCL != PIN_BUTTON && PIN_OLED_SDA != PIN_ENCODER_A &&
-                  PIN_OLED_SDA != PIN_ENCODER_B && PIN_OLED_SCL != PIN_ENCODER_A &&
-                  PIN_OLED_SCL != PIN_ENCODER_B,
-              "oled pins must differ from each other, the button, and the encoder");
+static_assert(pinIsUsable(PIN_TFT_SCL) && pinIsUsable(PIN_TFT_SDA) && pinIsUsable(PIN_TFT_RST) &&
+                  pinIsUsable(PIN_TFT_DC) && pinIsUsable(PIN_TFT_CS) && pinIsUsable(PIN_TFT_BL),
+              "display must use GPIO 1-13");
+static_assert(PIN_TFT_SCL != PIN_TFT_SDA && PIN_TFT_SCL != PIN_TFT_RST && PIN_TFT_SCL != PIN_TFT_DC &&
+                  PIN_TFT_SCL != PIN_TFT_CS && PIN_TFT_SCL != PIN_TFT_BL && PIN_TFT_SDA != PIN_TFT_RST &&
+                  PIN_TFT_SDA != PIN_TFT_DC && PIN_TFT_SDA != PIN_TFT_CS && PIN_TFT_SDA != PIN_TFT_BL &&
+                  PIN_TFT_RST != PIN_TFT_DC && PIN_TFT_RST != PIN_TFT_CS && PIN_TFT_RST != PIN_TFT_BL &&
+                  PIN_TFT_DC != PIN_TFT_CS && PIN_TFT_DC != PIN_TFT_BL && PIN_TFT_CS != PIN_TFT_BL,
+              "display pins must all differ");
+static_assert(PIN_TFT_SCL != PIN_BUTTON && PIN_TFT_SDA != PIN_BUTTON && PIN_TFT_RST != PIN_BUTTON &&
+                  PIN_TFT_DC != PIN_BUTTON && PIN_TFT_CS != PIN_BUTTON && PIN_TFT_BL != PIN_BUTTON &&
+                  PIN_TFT_SCL != PIN_ENCODER_A && PIN_TFT_SDA != PIN_ENCODER_A &&
+                  PIN_TFT_RST != PIN_ENCODER_A && PIN_TFT_DC != PIN_ENCODER_A &&
+                  PIN_TFT_CS != PIN_ENCODER_A && PIN_TFT_BL != PIN_ENCODER_A &&
+                  PIN_TFT_SCL != PIN_ENCODER_B && PIN_TFT_SDA != PIN_ENCODER_B &&
+                  PIN_TFT_RST != PIN_ENCODER_B && PIN_TFT_DC != PIN_ENCODER_B &&
+                  PIN_TFT_CS != PIN_ENCODER_B && PIN_TFT_BL != PIN_ENCODER_B,
+              "display pins must differ from the button and the encoder");
 static_assert(ENCODER_COUNTS_PER_DETENT >= 1, "a detent needs at least one edge");
 static_assert(BUTTON_DOUBLE_TAP_MS > BUTTON_DEBOUNCE_MS, "double tap must outlast debounce");
 static_assert(BUTTON_HOLD_MS > BUTTON_DOUBLE_TAP_MS, "hold must outlast a double tap");

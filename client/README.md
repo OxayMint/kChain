@@ -1,6 +1,6 @@
 # kChain client
 
-Browser editor for the vault on the ESP32-C3. See the repository README for pins, firmware, and how this page talks to the board.
+Browser editor for the vault on the ESP32-S3. See the repository README for pins, firmware, and how this page talks to the board.
 
 ```bash
 npm install
