@@ -89,7 +89,8 @@ bool SerialLink::consumeUsbChange(bool& ready) {
   return true;
 }
 
-bool SerialLink::requestUsbType(const VaultEntry& entry, Vault& vault, const char*& error) {
+bool SerialLink::requestUsbType(const VaultEntry& entry, Vault& vault, const char*& error,
+                                void (*tick)()) {
   typeAckPending_ = true;
   typeAckGot_ = false;
   typeAckOk_ = false;
@@ -107,6 +108,7 @@ bool SerialLink::requestUsbType(const VaultEntry& entry, Vault& vault, const cha
   const unsigned long start = millis();
   while (millis() - start < USB_TYPE_ACK_MS) {
     poll(vault);
+    if (tick != nullptr) tick();
     if (typeAckGot_) break;
     delay(LOOP_POLL_MS);
   }

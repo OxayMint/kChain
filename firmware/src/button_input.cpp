@@ -55,7 +55,10 @@ InputEvent ButtonInput::poll() {
     pressEdge_ = true;
     pressedAtMs_ = now;
     holdFired_ = false;
-    if (phase_ == Phase::WaitSecond && now - releasedAtMs_ <= BUTTON_DOUBLE_TAP_MS) {
+    // lastChangeMs_ is when the pin went down. The debounced poll is later,
+    // and using that clock misses a second click that already started in time.
+    if (phase_ == Phase::WaitSecond &&
+        lastChangeMs_ - releasedAtMs_ <= BUTTON_DOUBLE_TAP_MS) {
       secondTap_ = true;
       phase_ = Phase::Down;
       return InputEvent::None;
@@ -81,11 +84,14 @@ InputEvent ButtonInput::poll() {
       return InputEvent::DoubleTap;
     }
     phase_ = Phase::WaitSecond;
-    releasedAtMs_ = now;
+    // The pin rose at lastChangeMs_. The window starts then, not at this poll.
+    releasedAtMs_ = lastChangeMs_;
     return InputEvent::None;
   }
 
-  if (phase_ == Phase::WaitSecond && now - releasedAtMs_ > BUTTON_DOUBLE_TAP_MS) {
+  // A second press that is still settling must not expire the window.
+  if (phase_ == Phase::WaitSecond && !pressed &&
+      now - releasedAtMs_ > BUTTON_DOUBLE_TAP_MS) {
     phase_ = Phase::Idle;
     secondTap_ = false;
     return InputEvent::Tap;

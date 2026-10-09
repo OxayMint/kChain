@@ -11,6 +11,8 @@ class ButtonInput : public Input {
   // True once for each debounced press, including the start of a hold.
   bool consumePress();
   bool held() const { return stablePressed_; }
+  // True after poll() sees the second press of a double tap, until that press ends.
+  bool inSecondTap() const { return secondTap_; }
 
  private:
   enum class Phase : uint8_t { Idle, Down, WaitSecond };

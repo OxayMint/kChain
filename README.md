@@ -8,9 +8,9 @@ Entries are stored in the clear on device flash. There is no encryption and no u
 
 The button is active-low. Wire the switch between GPIO 5 and GND. The firmware enables the internal pull-up. Change `PIN_BUTTON` in `firmware/include/config.h` and rebuild. The file rejects pins this board cannot use.
 
-The mouse-wheel encoder navigates (the H-13 mark is the 13 mm body). Wire its common pin to GND, A to GPIO 6, and B to GPIO 7. The common pin is the middle one. Each detent steps one entry. Wheel up moves to the next entry and wheel down moves to the previous one, and both wrap through every entry. Swap A and B if those directions feel backwards.
+The mouse-wheel encoder navigates (the H-13 mark is the 13 mm body). Wire its common pin to GND, A to GPIO 6, and B to GPIO 7. The common pin is the middle one. Each detent steps one matching entry. While a search letter is blinking, a detent changes that letter instead. The wheel walks A to Z and then a delete mark, and both directions wrap. Wheel up moves forward and wheel down moves back. Swap A and B if those directions feel backwards.
 
-The blue onboard LED is GPIO 8, active-low. The firmware leaves it undriven. The editor shows whether the board is idle or which entry is selected. A later screen module is the device UI.
+The blue onboard LED is GPIO 8, active-low. The firmware leaves it undriven. The 0.91 inch OLED is I2C: SDA is GPIO 1, and the clock (marked SCK on the module) is GPIO 0. Power it from 3.3 V. While the board is awake the panel shows the search query and two matching names. The names are right-aligned, with the type icon after the name and a blank line between them. The selected name is larger. A dot on its left draws a line to a bar on the left edge. A type opens that bar and slides the name through. Idle clears the glass. The editor shows the same idle and selection state.
 
 Leave these alone:
 
@@ -19,7 +19,7 @@ Leave these alone:
 - GPIO 11–19 are not on the header. They are the SPI flash and the native USB pins.
 - 5V, G, and 3.3V are power only.
 
-Usable button GPIOs on the header are 0, 1, 3, 4, 5, 6, 7, and 10.
+Usable button GPIOs on the header are 0, 1, 3, 4, 5, 6, 7, and 10. GPIO 0 and 1 are the OLED in this build, so the button and the encoder stay off those two.
 
 ## Firmware
 
@@ -40,7 +40,7 @@ If upload never starts, hold BOOT (GPIO 9), tap RST, release BOOT, and run the u
 
 An empty vault is valid. On first boot the firmware creates one. The board starts idle, and a press does nothing until there is an entry. USB serial keeps running in idle. The radio does not. While the editor is connected it shows “Device is idle”.
 
-A tap wakes the board onto entry 1, or onto the login the extension has marked for the current page. Wheel up and wheel down step through every entry and wrap. A turn also wakes the board onto the entry it lands on. The editor then shows that entry, for example “On the device: 2. github.com”. A double tap types the selected entry through the USB typer, then the board returns to idle. If the USB typer is not running, the double tap does not type. A generic entry types its password. A website entry types the username, a Tab key, then the password. The hostname is not typed. A crypto entry types its words, spaces included. It also returns to idle after 5 seconds with the button released and the wheel still. Typing releases every key when it finishes. It does not press Enter. The tap or double tap that wakes the board leaves the entry untyped; a later double tap types it. A hold is reserved for the menu.
+A tap wakes the board onto entry 1, or onto the login the extension has marked for the current page. The search query is empty after a wake, so wheel up and wheel down step through every entry and wrap. A turn also wakes the board onto the entry it lands on. The editor then shows that entry, for example “On the device: 2. github.com”. The panel shows the query on top and two matching names below, and clears them when the board returns to idle. Wheel up puts the next match on the top line. Wheel down puts the previous match on the bottom line. A double tap types the selected entry through the USB typer. As the type starts, the left edge opens and the name slides through it, then the board returns to idle. If the USB typer is not running, the double tap does not type. A generic entry types its password. A website entry types the username, a Tab key, then the password. The hostname is not typed. A crypto entry types its words, spaces included. It also returns to idle after 5 seconds with the button released and the wheel still. Typing releases every key when it finishes. It does not press Enter. The tap or double tap that wakes the board leaves the entry untyped; a later double tap types it. Holding the button while awake adds a blinking letter, starting at A. A press released within 200 ms does not add a letter; it is a click, and a second click within 500 ms is a double tap. Until the button is released, the wheel changes that letter from A to Z, with a delete mark between them. Landing on delete removes the previous letter. The list narrows to names that start with the query, ignoring case, and shows two of them. Releasing the button leaves the letter solid. Another press adds the next letter. After that the wheel steps through matches only. A double tap types. If that gesture had already added a letter, the letter is removed first. If nothing matches, the panel says not found and a double tap does not type.
 
 ## Client
 

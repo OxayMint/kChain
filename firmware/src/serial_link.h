@@ -21,7 +21,9 @@ class SerialLink {
   // True once, when the USB typer becomes ready or goes quiet.
   bool consumeUsbChange(bool& ready);
   // Sends type_usb and waits for type_ack. error is set when this returns false.
-  bool requestUsbType(const VaultEntry& entry, Vault& vault, const char*& error);
+  // tick runs on each wait so the screen can move while loop() is blocked.
+  // It may be null.
+  bool requestUsbType(const VaultEntry& entry, Vault& vault, const char*& error, void (*tick)() = nullptr);
 
   void emitReady(const Vault& vault);
   void emitSelected(const Vault& vault);
